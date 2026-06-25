@@ -1,0 +1,47 @@
+name: sample-agent-eval
+
+providers:
+  - type: mock
+    name: baseline
+    responses:
+      你好: 你好，我可以帮助你完成问题分析、工具调用和结果总结。
+      返回 JSON: '{"ok": true, "items": [1, 2, 3]}'
+    default_response: 这是一个 mock agent 回答，包含 ID 10086，且没有错误。
+
+settings:
+  num_trials: 1
+  pass_threshold: 0.6
+  output_dir: ./results
+
+dataset:
+  name: sample
+  version: v1
+
+defaultAssertions:
+  - type: non-empty
+  - type: no-error
+  - type: response-time
+    value: 30
+
+tests:
+  - id: hello
+    question: 你好
+    priority: high
+    assert:
+      - type: min-length
+        value: 10
+  - id: json
+    question: 返回 JSON
+    assert:
+      - type: contains-json
+  - id: tool-trace
+    question: 工具调用测试
+    trace:
+      tool_calls:
+        - name: Search
+        - name: Read
+    assert:
+      - type: tool-called
+        value: [Search, Read]
+      - type: max-tool-calls
+        value: 3

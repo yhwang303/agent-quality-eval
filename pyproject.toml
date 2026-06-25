@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-quality-eval"
+version = "0.1.33"
+description = "Local-first agent observability plus automated evaluation and A/B testing."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "agent-quality-eval contributors" }]
+keywords = ["agent", "evaluation", "observability", "opentelemetry", "llm"]
+dependencies = [
+    "click>=8.1,<9",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "psutil>=5.9",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "watchfiles>=0.21",
+    "python-dotenv>=1.0",
+    "tomli>=2.0 ; python_version < '3.11'",
+    "tomli_w>=1.0",
+    "colorama>=0.4.6 ; platform_system == 'Windows'",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
+    "opentelemetry-semantic-conventions>=0.48b0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+agent-eval = "agent_quality_eval.cli:_entrypoint"
+agent-cot = "agent_cot.cli:_entrypoint"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["agent_quality_eval*", "agent_cot*"]
+exclude = ["agent_cot.assets*"]
+
+[tool.setuptools.package-data]
+agent_cot = [
+    "assets/hooks/*.js",
+    "assets/hooks/*.py",
+    "assets/hooks/cursor/*.js",
+    "assets/hooks/cursor/*.py",
+    "assets/hooks/claude/*.js",
+    "assets/hooks/claude/*.py",
+    "assets/hooks/vscode/*.js",
+    "assets/hooks/vscode/*.py",
+    "assets/hooks/codebuddy/*.js",
+    "assets/hooks/codebuddy/*.py",
+    "assets/hooks/codex/*.js",
+    "assets/hooks/codex/*.py",
+    "assets/backend/*.py",
+    "assets/backend/*.txt",
+    "assets/backend/*.md",
+    "assets/backend/services/*.py",
+    "assets/cot-extractor-src/*.py",
+    "assets/cot-extractor/scripts/*.py",
+    "assets/cot-extractor/src/*.py",
+    "assets/frontend-dist/*",
+    "assets/frontend-dist/**/*",
+    "py.typed",
+]
+agent_quality_eval = [
+    "assets/*.html",
+    "templates/*.yaml",
+    "templates/*.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    "src/agent_cot/assets",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = ["E501"]

@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.tmp*/
+build/
+dist/
+*.spec.bak
+results/
+src/agent_quality_eval/templates/results/
+*.db
+*.sqlite
+*.log

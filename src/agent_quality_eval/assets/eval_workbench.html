@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Quality Eval</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090d14;
+      --panel: #111824;
+      --panel-2: #151f2d;
+      --panel-3: #0f1722;
+      --line: #223044;
+      --line-soft: #1a2636;
+      --text: #e9eef7;
+      --muted: #8ea0b8;
+      --soft: #b7c4d8;
+      --blue: #4aa3ff;
+      --teal: #33d1b2;
+      --amber: #f4b350;
+      --red: #ff6b6b;
+      --green: #58d68d;
+      --shadow: 0 18px 60px rgba(0, 0, 0, .34);
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, #0c1220 0%, #090d14 38%, #090d14 100%);
+      color: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    button, input, select { font: inherit; }
+    .shell {
+      display: grid;
+      grid-template-columns: 272px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    aside {
+      border-right: 1px solid var(--line);
+      background: #0a1019;
+      padding: 18px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+    }
+    .brand {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 22px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+    .brand p { margin: 0; color: var(--muted); font-size: 12px; }
+    .nav {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 22px;
+    }
+    .nav button, .link-button {
+      width: 100%;
+      min-height: 40px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      color: var(--soft);
+      background: transparent;
+      text-align: left;
+      padding: 9px 11px;
+      cursor: pointer;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .nav button.active, .nav button:hover, .link-button:hover {
+      color: var(--text);
+      background: var(--panel-2);
+      border-color: var(--line);
+    }
+    .workspace {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      background: var(--panel-3);
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    main { padding: 20px; min-width: 0; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .title h2 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.2;
+    }
+    .title p { margin: 6px 0 0; color: var(--muted); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    button.primary, button.secondary, button.danger, button.success {
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      min-height: 38px;
+      padding: 8px 12px;
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 650;
+    }
+    button.primary { background: #1769aa; border-color: #287cc2; }
+    button.secondary { background: var(--panel-2); }
+    button.success { background: #107a63; border-color: #1aa98b; }
+    button.danger { background: #9c2e38; border-color: #d24d5a; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.7fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(17, 24, 36, .94);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .panel-head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .panel-head h3 { margin: 0; font-size: 15px; }
+    .panel-body { padding: 16px; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(128px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 13px;
+      background: #0d1420;
+      min-height: 86px;
+    }
+    .metric .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 7px;
+    }
+    .metric .value {
+      font-size: 23px;
+      font-weight: 750;
+      line-height: 1.1;
+      color: var(--text);
+    }
+    .metric.blue { border-color: rgba(74, 163, 255, .45); }
+    .metric.teal { border-color: rgba(51, 209, 178, .45); }
+    .metric.amber { border-color: rgba(244, 179, 80, .45); }
+    .metric.red { border-color: rgba(255, 107, 107, .45); }
+    .session-list {
+      display: grid;
+      gap: 10px;
+      max-height: 640px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .session-row {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0d1420;
+      padding: 12px;
+      display: grid;
+      gap: 9px;
+    }
+    .session-row.selected { border-color: var(--blue); }
+    .session-row .id {
+      color: var(--text);
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .session-row .meta {
+      display: flex;
+      gap: 8px;
+      color: var(--muted);
+      flex-wrap: wrap;
+      font-size: 12px;
+    }
+    .session-row .row-actions { display: flex; gap: 8px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid var(--line);
+      color: var(--soft);
+      background: #101827;
+    }
+    .pill.pass { color: var(--green); border-color: rgba(88, 214, 141, .5); }
+    .pill.fail { color: var(--red); border-color: rgba(255, 107, 107, .5); }
+    .pill.warn { color: var(--amber); border-color: rgba(244, 179, 80, .5); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line-soft);
+      padding: 10px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    label {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    input, select {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #0c1320;
+      color: var(--text);
+      padding: 9px 10px;
+      min-height: 38px;
+    }
+    .view { display: none; }
+    .view.active { display: block; }
+    .score-bars {
+      display: grid;
+      gap: 10px;
+    }
+    .score-item {
+      display: grid;
+      gap: 6px;
+      border-bottom: 1px solid var(--line-soft);
+      padding-bottom: 10px;
+    }
+    .score-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #223044;
+      overflow: hidden;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, var(--blue), var(--teal));
+    }
+    pre {
+      max-height: 360px;
+      overflow: auto;
+      white-space: pre-wrap;
+      margin: 0;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #070b12;
+      color: #b7c4d8;
+      font-size: 12px;
+    }
+    .empty {
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      padding: 16px;
+      background: #0d1420;
+    }
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      .grid, .split { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <h1>Agent Quality Eval</h1>
+        <p>Trace-linked evaluation cockpit</p>
+      </div>
+      <div class="nav">
+        <button class="active" data-view="sessions">Session Eval <span>live</span></button>
+        <button data-view="experiments">Experiments <span id="expCount">0</span></button>
+        <button data-view="ab">A/B & Regression <span>gate</span></button>
+        <a class="link-button" href="/">Observation <span>open</span></a>
+      </div>
+      <div class="workspace" id="workspaceInfo">Loading workspace...</div>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <div class="title">
+          <h2 id="viewTitle">Session Evaluation</h2>
+          <p id="viewSubtitle">Pick an observed trace, generate an eval report, and inspect quality, usage, cost, latency, tools, and errors.</p>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="refreshBtn">Refresh</button>
+          <button class="primary" id="loadSessionsBtn">Load Sessions</button>
+        </div>
+      </div>
+
+      <section class="view active" id="view-sessions">
+        <div class="grid">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Observed Sessions</h3>
+              <span class="pill" id="sessionCount">0 sessions</span>
+            </div>
+            <div class="panel-body">
+              <div class="session-list" id="sessionList">
+                <div class="empty">No sessions loaded yet.</div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="metric-grid" id="sessionMetrics"></div>
+            <div class="panel" style="margin-bottom: 16px;">
+              <div class="panel-head">
+                <h3>Score Breakdown</h3>
+                <span class="pill" id="sessionGate">No report</span>
+              </div>
+              <div class="panel-body">
+                <div class="score-bars" id="scoreBreakdown">
+                  <div class="empty">Click Eval on a session to generate a report.</div>
+                </div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>Session Eval JSON</h3>
+                <span class="pill" id="sessionReportId">-</span>
+              </div>
+              <div class="panel-body"><pre id="sessionRaw">{}</pre></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-experiments">
+        <div class="panel" style="margin-bottom: 16px;">
+          <div class="panel-head">
+            <h3>Automated Eval Pipeline</h3>
+            <span class="pill">dataset + provider + scorer</span>
+          </div>
+          <div class="panel-body">
+            <label>
+              Eval config path
+              <input id="configPath" placeholder="C:\Users\...\sample_eval.yaml" />
+            </label>
+            <div class="actions" style="margin-top: 12px;">
+              <button class="primary" id="runBtn">Run Pipeline</button>
+              <button class="secondary" id="useSampleBtn">Use Sample</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="metric-grid" id="experimentMetrics"></div>
+        <div class="panel" style="margin-top: 16px;">
+          <div class="panel-head">
+            <h3>Experiment Runs</h3>
+            <span class="pill" id="experimentCount">0</span>
+          </div>
+          <div class="panel-body" style="overflow:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Dataset</th>
+                  <th>Provider</th>
+                  <th>Pass</th>
+                  <th>Score</th>
+                  <th>Latency</th>
+                  <th>Trials</th>
+                </tr>
+              </thead>
+              <tbody id="experimentsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-ab">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>A/B Testing & Regression Detection</h3>
+            <span class="pill">paired cases</span>
+          </div>
+          <div class="panel-body">
+            <div class="split">
+              <label>
+                Baseline experiment
+                <select id="baselineSelect"></select>
+              </label>
+              <label>
+                Candidate experiment
+                <select id="candidateSelect"></select>
+              </label>
+            </div>
+            <div class="actions" style="margin-top: 12px;">
+              <button class="primary" id="compareBtn">Compare A/B</button>
+              <button class="danger" id="regressionBtn">Run Regression Gate</button>
+              <button class="success" id="promoteBtn">Promote Candidate</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="metric-grid" id="abMetrics" style="margin-top: 16px;"></div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Gate Detail</h3>
+            <span class="pill" id="abGate">No run</span>
+          </div>
+          <div class="panel-body" id="abDetail">
+            <div class="empty">Run A/B compare or regression gate to see deltas and blocking reasons.</div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top: 16px;">
+          <div class="panel-head"><h3>A/B JSON</h3></div>
+          <div class="panel-body"><pre id="abRaw">{}</pre></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const state = {
+      workspace: null,
+      experiments: [],
+      sessions: [],
+      selectedSessionId: new URLSearchParams(location.search).get("session_id"),
+      busy: false,
+    };
+    const $ = (id) => document.getElementById(id);
+
+    function fmtInt(value) {
+      return new Intl.NumberFormat().format(Number(value || 0));
+    }
+    function pct(value) {
+      return `${((Number(value) || 0) * 100).toFixed(1)}%`;
+    }
+    function money(value) {
+      return value === null || value === undefined ? "n/a" : `$${Number(value).toFixed(6)}`;
+    }
+    function ms(value) {
+      return value === null || value === undefined ? "n/a" : `${Number(value).toFixed(0)} ms`;
+    }
+    function setBusy(busy) {
+      state.busy = busy;
+      for (const btn of document.querySelectorAll("button")) btn.disabled = busy;
+    }
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+      if (!res.ok) throw new Error(data.detail || text || res.statusText);
+      return data;
+    }
+    function renderMetrics(target, items) {
+      target.innerHTML = items.map((item) => `
+        <div class="metric ${item.tone || ""}">
+          <div class="label">${item.label}</div>
+          <div class="value">${item.value}</div>
+          ${item.hint ? `<div class="label" style="margin-top: 8px;">${item.hint}</div>` : ""}
+        </div>
+      `).join("");
+    }
+    function setView(name) {
+      for (const btn of document.querySelectorAll("[data-view]")) btn.classList.toggle("active", btn.dataset.view === name);
+      for (const view of document.querySelectorAll(".view")) view.classList.toggle("active", view.id === `view-${name}`);
+      const titles = {
+        sessions: ["Session Evaluation", "Every observed conversation can produce an eval report linked to its trace."],
+        experiments: ["Automated Eval Pipeline", "Run dataset-based experiments and inspect pass rate, score, latency, and trials."],
+        ab: ["A/B Testing & Regression", "Compare baseline and candidate experiments, then gate regressions before promotion."],
+      };
+      $("viewTitle").textContent = titles[name][0];
+      $("viewSubtitle").textContent = titles[name][1];
+    }
+    async function refresh() {
+      const workspace = await api("/api/evals/workspace");
+      state.workspace = workspace;
+      $("workspaceInfo").innerHTML = `Home<br>${workspace.home}<br><br>Eval DB<br>${workspace.db_path}`;
+      $("configPath").value = workspace.sample_config;
+
+      const exps = await api("/api/evals/experiments?limit=100");
+      state.experiments = exps.experiments || [];
+      renderExperiments();
+
+      const reports = await api("/api/evals/session-reports?limit=100");
+      state.sessionReports = reports.session_evals || [];
+      renderExperimentMetrics();
+    }
+    async function loadSessions() {
+      const data = await api("/api/sessions");
+      state.sessions = Array.isArray(data) ? data : (data.sessions || []);
+      $("sessionCount").textContent = `${state.sessions.length} sessions`;
+      renderSessions();
+      if (state.selectedSessionId) {
+        const exists = state.sessions.some((s) => sessionId(s) === state.selectedSessionId);
+        if (exists) await evalSession(state.selectedSessionId);
+      }
+    }
+    function sessionId(s) {
+      return String(s.session_id || s.id || s.sid || s.name || "");
+    }
+    function renderSessions() {
+      if (!state.sessions.length) {
+        $("sessionList").innerHTML = `<div class="empty">No observed sessions yet. Start a Codex/Cursor/Claude session, then refresh here.</div>`;
+        return;
+      }
+      $("sessionList").innerHTML = state.sessions.map((s) => {
+        const id = sessionId(s);
+        const usage = s.otel_kpi || s.otel || s.kpi || s.usage || s;
+        return `
+          <div class="session-row ${id === state.selectedSessionId ? "selected" : ""}" data-session="${id}">
+            <div class="id">${id}</div>
+            <div class="meta">
+              <span>${s.agent_type || s.agent || "agent"}</span>
+              <span>${fmtInt(usage.total_tokens || ((usage.input_tokens || 0) + (usage.output_tokens || 0)))} tokens</span>
+              <span>${fmtInt(s.total_tool_calls || usage.tool_count || 0)} tools</span>
+              <span>${money(usage.cost_usd)}</span>
+            </div>
+            <div class="row-actions">
+              <button class="primary" data-eval-session="${id}">Eval</button>
+              <a class="link-button" style="width:auto; min-height:38px;" href="/?session_id=${encodeURIComponent(id)}">Trace</a>
+            </div>
+          </div>
+        `;
+      }).join("");
+      for (const btn of document.querySelectorAll("[data-eval-session]")) {
+        btn.addEventListener("click", () => evalSession(btn.dataset.evalSession));
+      }
+    }
+    async function evalSession(id) {
+      setBusy(true);
+      try {
+        state.selectedSessionId = id;
+        renderSessions();
+        const report = await api(`/api/evals/session/${encodeURIComponent(id)}`, { method: "POST" });
+        renderSessionReport(report);
+        await refresh();
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    function renderSessionReport(report) {
+      const m = report.metrics || {};
+      $("sessionGate").textContent = report.passed ? "PASS" : "FAIL";
+      $("sessionGate").className = `pill ${report.passed ? "pass" : "fail"}`;
+      $("sessionReportId").textContent = report.session_id || "-";
+      renderMetrics($("sessionMetrics"), [
+        { label: "Quality Score", value: pct(report.overall_score), tone: report.passed ? "teal" : "red" },
+        { label: "Total Tokens", value: fmtInt(m.total_tokens), hint: `${fmtInt(m.input_tokens)} in / ${fmtInt(m.output_tokens)} out`, tone: "blue" },
+        { label: "Cost", value: money(m.cost_usd), hint: `${fmtInt(m.cache_read_tokens)} cache read`, tone: "amber" },
+        { label: "Latency", value: ms(m.latency_ms), hint: `${fmtInt(m.tool_count)} tools / ${fmtInt(m.error_count)} errors`, tone: m.error_count ? "red" : "teal" },
+      ]);
+      $("scoreBreakdown").innerHTML = (report.scores || []).map((score) => `
+        <div class="score-item">
+          <div class="score-top">
+            <strong>${score.name}</strong>
+            <span class="pill ${score.passed ? "pass" : "fail"}">${pct(score.score)}</span>
+          </div>
+          <div class="bar"><span style="width:${Math.max(0, Math.min(100, Number(score.score || 0) * 100))}%"></span></div>
+          <div class="muted">${score.reason}</div>
+        </div>
+      `).join("");
+      $("sessionRaw").textContent = JSON.stringify(report, null, 2);
+    }
+    function experimentLabel(exp) {
+      return `${exp.id} | ${exp.dataset_name}@${exp.dataset_version} | ${(exp.providers || []).join(",")}`;
+    }
+    function renderExperiments() {
+      $("expCount").textContent = state.experiments.length;
+      $("experimentCount").textContent = state.experiments.length;
+      const options = state.experiments.map((exp) => `<option value="${exp.id}">${experimentLabel(exp)}</option>`).join("");
+      $("baselineSelect").innerHTML = options;
+      $("candidateSelect").innerHTML = options;
+      if (state.experiments.length > 1) {
+        $("baselineSelect").selectedIndex = 1;
+        $("candidateSelect").selectedIndex = 0;
+      }
+      $("experimentsBody").innerHTML = state.experiments.map((exp) => `
+        <tr>
+          <td><button class="secondary" data-exp="${exp.id}">${exp.id}</button></td>
+          <td>${exp.dataset_name}@${exp.dataset_version}</td>
+          <td>${(exp.providers || []).join(", ")}</td>
+          <td>${pct(exp.overall_pass_rate)}</td>
+          <td>${Number(exp.average_score || 0).toFixed(2)}</td>
+          <td>${Number(exp.average_response_time || 0).toFixed(2)}s</td>
+          <td>${fmtInt(exp.total_trials)}</td>
+        </tr>
+      `).join("");
+      for (const btn of document.querySelectorAll("[data-exp]")) {
+        btn.addEventListener("click", () => loadExperiment(btn.dataset.exp));
+      }
+    }
+    function renderExperimentMetrics() {
+      const latest = state.experiments[0] || {};
+      renderMetrics($("experimentMetrics"), [
+        { label: "Experiments", value: fmtInt(state.experiments.length), tone: "blue" },
+        { label: "Latest Pass", value: latest.overall_pass_rate === undefined ? "n/a" : pct(latest.overall_pass_rate), tone: "teal" },
+        { label: "Session Reports", value: fmtInt((state.sessionReports || []).length), tone: "amber" },
+        { label: "Eval DB", value: state.workspace?.db_exists ? "Ready" : "New", tone: "teal" },
+      ]);
+    }
+    async function loadExperiment(id) {
+      const exp = await api(`/api/evals/experiments/${encodeURIComponent(id)}`);
+      $("sessionRaw").textContent = JSON.stringify(exp, null, 2);
+      setView("experiments");
+    }
+    async function runEval() {
+      setBusy(true);
+      try {
+        const result = await api("/api/evals/run", {
+          method: "POST",
+          body: JSON.stringify({ config_path: $("configPath").value }),
+        });
+        await refresh();
+        $("sessionRaw").textContent = JSON.stringify(result, null, 2);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    async function compare(kind) {
+      setBusy(true);
+      try {
+        const body = { baseline_id: $("baselineSelect").value, candidate_id: $("candidateSelect").value };
+        const result = await api(`/api/evals/${kind}`, { method: "POST", body: JSON.stringify(body) });
+        const comparison = result.comparison || result;
+        const passed = kind === "regression" ? result.passed : comparison.loss === 0;
+        $("abGate").textContent = passed ? "PASS" : "FAIL";
+        $("abGate").className = `pill ${passed ? "pass" : "fail"}`;
+        renderMetrics($("abMetrics"), [
+          { label: "Win / Tie / Loss", value: `${comparison.win}/${comparison.tie}/${comparison.loss}`, tone: comparison.loss ? "red" : "teal" },
+          { label: "Score Delta", value: Number(comparison.average_score_delta || 0).toFixed(3), tone: "blue" },
+          { label: "Pass Delta", value: Number(comparison.average_pass_rate_delta || 0).toFixed(3), tone: "teal" },
+          { label: "Latency Delta", value: `${Number(comparison.average_latency_delta || 0).toFixed(3)}s`, tone: "amber" },
+        ]);
+        const reasons = result.reasons || [];
+        const regressions = comparison.regressions || [];
+        $("abDetail").innerHTML = `
+          ${reasons.length ? `<p><span class="pill fail">Blocked</span> ${reasons.join("<br>")}</p>` : `<p><span class="pill pass">No blocking regression</span></p>`}
+          <table>
+            <thead><tr><th>Case</th><th>Baseline</th><th>Candidate</th><th>Score Δ</th><th>Pass Δ</th></tr></thead>
+            <tbody>
+              ${regressions.map((item) => `
+                <tr>
+                  <td>${item.case_id}<br><span class="muted">${item.question || ""}</span></td>
+                  <td>${item.baseline_provider || ""}</td>
+                  <td>${item.candidate_provider || ""}</td>
+                  <td>${Number(item.score_delta || 0).toFixed(3)}</td>
+                  <td>${Number(item.pass_rate_delta || 0).toFixed(3)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        $("abRaw").textContent = JSON.stringify(result, null, 2);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+    async function promote() {
+      const experiment_id = $("candidateSelect").value;
+      if (!experiment_id) return alert("No candidate selected");
+      await api("/api/evals/baselines/promote", { method: "POST", body: JSON.stringify({ experiment_id }) });
+      alert("Candidate promoted as baseline");
+    }
+
+    for (const btn of document.querySelectorAll("[data-view]")) {
+      btn.addEventListener("click", () => setView(btn.dataset.view));
+    }
+    $("refreshBtn").addEventListener("click", async () => { await refresh(); await loadSessions(); });
+    $("loadSessionsBtn").addEventListener("click", loadSessions);
+    $("runBtn").addEventListener("click", runEval);
+    $("useSampleBtn").addEventListener("click", () => { $("configPath").value = state.workspace.sample_config; });
+    $("compareBtn").addEventListener("click", () => compare("compare"));
+    $("regressionBtn").addEventListener("click", () => compare("regression"));
+    $("promoteBtn").addEventListener("click", promote);
+
+    refresh().then(loadSessions).catch((err) => alert(err.message));
+  </script>
+</body>
+</html>

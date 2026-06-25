@@ -1,0 +1,1865 @@
+name: cbm-real-dev-cases-v3
+providers:
+- type: mock
+  name: replace-with-agent-under-test
+  default_response: This is a placeholder provider. Replace it with a real agent provider
+    before using this dataset for release gating.
+settings:
+  num_trials: 1
+  pass_threshold: 0.8
+  output_dir: ./results
+dataset:
+  name: cbm-real-dev-cases
+  version: v1
+  description: Redacted real development/debugging cases extracted from CodeBuddy
+    Memory.
+defaultAssertions:
+- type: non-empty
+- type: no-error
+- type: no-pii
+- type: min-length
+  value: 80
+tests:
+- id: cbm-bugfix-001
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户希望把当前工作树中的精简版 Codex 集成内容提交到远端新分支，并确保它基于已修复缺陷的主干且不包含 import 和混合检索功能。
+    检查了当前变更与暂存内容，搜索并确认是否仍包含导入、混合检索、向量库等相关能力，同时核对了目标分支与基线分支的提交关系。 已将当前内容提交为一个新提交，并将远端目标分支更新为仅基于缺陷修复主干加这一个
+    Codex 适配提交；同时确认未包含 import、embedding、混合检索等不需要功能。'
+  description: Real CBM case from agent-memory / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已将当前内容提交为一个新提交，并将远端目标分支更新为仅基于缺陷修复主干加这一个 Codex 适配提交；同时确认未包含 import、embedding、混合检索等不需要功能。
+    建议让相关同事基于该远端分支进行验收；如需长期保留，可补充分支说明或发起合并请求以固定用途。 将内存恢复钩子改回 PascalCase 并保留 transcript
+    常驻恢复 调整 Codex 应用的 hook 命名与 transcript watcher 恢复策略，重新打包并推送远端分支 这次把内存恢复相关 hook
+    统一改回 PascalCase 命名，并继续保留 transcript fallback 的常驻恢复方案。与此同时，将原先更激进的 watcher 节奏从
+    3 秒调整为 6 秒扫描、5 秒静默，以换取更缓和的恢复行为，预期恢复延迟为 5 到 11 秒。实现范围被明确限制，没有加入 import、hybrid MCP
+    或 [REDACTED_PATH] 目录内容。修改后重新打包生成了 2.0.30 安装包，验证结果显示 Codex 相关测试 30 项全部通过，且安装包内代码也已确认是
+    PascalCase 与 [REDACTED_PATH] 的配置。最后，变更已推送到 live 分支，旧的全功能分支仍保留且未被覆盖。 已将 hook 写法改回
+    PascalCase：UserPromptSubmit、SessionStart、PostToolUse、PreToolUse、PreCompact、Stop、SessionEnd。
+    保留 transcript fallback 常驻恢复机制。 transcript watcher 从 3 秒调整为 6 秒扫描、5 秒静默。 预期恢复延迟约为
+    5 到 11 秒。 未加入 import、hybrid MCP、[REDACTED_PATH] 目录相关内容。 已生成安装包：[REDACTED_ARTIFACT]。
+    Codex 相关测试结果为 [REDACTED_PATH] 通过。 安装包内代码已确认采用 PascalCase，且 watcher...'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 2012
+    memory_session_id: session-519c7ca77c6d
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-002
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户反馈虽然 thinking 重复问题已解决，但前端界面仍然异常，并附截图让助手继续排查原因。 助手查看了截图，并排查前端异常是否来自样式问题、旧后台进程未被替换、健康检查超时以及旧资源路径配置残留等启动接管问题。
+    助手确认问题不在前端代码本身，而在旧后台和旧资源未被正确接管；随后完成启动接管、健康检查、配置钉住当前资源等修复，并产出经本机验证的 1.0.11 版本供用户刷新验证。'
+  description: Real CBM case from ai-ide-langfuse / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    助手确认问题不在前端代码本身，而在旧后台和旧资源未被正确接管；随后完成启动接管、健康检查、配置钉住当前资源等修复，并产出经本机验证的 1.0.11 版本供用户刷新验证。
+    建议用户直接打开或刷新本地页面验证新版；若仍异常，再继续检查是否还有旧标签页或残留进程。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1973
+    memory_session_id: session-82aa8c89276a
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-003
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想排查 Codex 报错导致消息无法发送的问题，并恢复正常使用。 检查了 Codex 配置中的模型与插件设置，并重点排查了 otel
+    相关配置的 TOML 语法与字段定义是否冲突。 已定位消息发送失败的根因，修正了 otel 段字段冲突，并给出重启 Codex 后验证恢复的结论。'
+  description: Real CBM case from agent-memory / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已定位消息发送失败的根因，修正了 otel 段字段冲突，并给出重启 Codex 后验证恢复的结论。 重启 Codex 并测试是否能正常发送消息；后续如需更细的上报配置，避免在已是字符串的键下继续使用嵌套表写法。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1929
+    memory_session_id: session-6291e58b93e3
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-004
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认新建的合入分支是否与“master bugs only”修复分支内容完全一致。 讨论了两个分支当前是否指向同一提交，以及为什么还要额外创建一个用于向受保护的
+    master 发起合并请求的分支。 已明确说明两个分支目前一致，并解释了新分支存在的流程性原因及备份分支的用途。'
+  description: Real CBM case from agent-memory / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已明确说明两个分支目前一致，并解释了新分支存在的流程性原因及备份分支的用途。 如果平台允许，可直接用原修复分支向 master 发起合并请求；否则继续使用当前合入分支。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1969
+    memory_session_id: session-b3260953d0af
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-005
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想梳理当前分支最近的修复改动，并确认 tier1 数据的来源、分类规则及其与历史缺陷的关系。 查看了近期提交记录，追踪了 tier1
+    数据链路，并检索了与 tier1 和观察分类相关的历史问题与文档说明。 整理了当前分支的主要修复方向，归纳了 tier1 的获取机制，并结合历史缺陷信息解释了相关异常的成因背景。'
+  description: Real CBM case from agent-memory / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    整理了当前分支的主要修复方向，归纳了 tier1 的获取机制，并结合历史缺陷信息解释了相关异常的成因背景。 建议继续按事件类型做端到端验证，确认各类输入都会落到正确分类；同时抽样核对
+    tier1 统计结果，验证修复后数据分布是否恢复正常。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1878
+    memory_session_id: session-9025cfdf92cb
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-006
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想了解当前项目最近一段时间主要完成了哪些工作。 查看了近期提交记录、最近一次关键提交的变更概况，并顺带确认了项目整体目录结构与一个重点模块的当前内容。
+    完成了对近期代码历史的检查，补充查看了关键提交与项目结构，并形成了可用于汇报的最近工作概览。'
+  description: Real CBM case from ai-ide-langfuse / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    完成了对近期代码历史的检查，补充查看了关键提交与项目结构，并形成了可用于汇报的最近工作概览。 可以进一步按提交主题整理成“功能、修复、重构”三类总结；如需要，也可以继续提炼出最近一周最重要的几项变更及其影响。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1839
+    memory_session_id: session-4182f606ff85
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-007
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想获取一套 PowerShell 指令与操作流程，用于先查看 imported 数据数量，再安全清除这些导入项。 确认了与导入历史相关的数据清理方式，区分了“仅统计数量的预览”和“实际执行删除”的两步流程，并结合导入摘要重复问题的上下文给出清理后重导建议。
+    已提供查看 imported 数量的命令、正式清理前的预览命令、执行清理的命令，以及清空后验证与重导的完整操作顺序。'
+  description: Real CBM case from agent-memory / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已提供查看 imported 数量的命令、正式清理前的预览命令、执行清理的命令，以及清空后验证与重导的完整操作顺序。 先按“查看数量 → dry-run →
+    正式清理 → 再次验证”执行一遍；如果目的是回归测试，再在清空后重装最新版本并重新导入历史进行确认。 记录一次无参数的命令行执行事件 Shell 钩子触发，执行时长约
+    0.273 秒，未提供具体命令内容 本次会话中记录到一次终端执行事件，虽然没有暴露具体命令内容，但该事件仍然表明代理在该时间点进行了实际的 Shell 层操作。此类记录对还原任务推进过程、识别是否发生构建、测试、检查或环境探测等行为具有基础价值。由于仅包含时长与触发类型，当前更适合作为操作轨迹信息保存，而非用于判断具体业务结果。
+    发生事件类型为命令行执行。 钩子类型为 shell。 事件发生时间为 2026-06-09T11:56:51.368Z。 参数对象为空。 结果中记录的执行时长为
+    0.273 秒。 未提供具体执行的命令、标准输出、标准错误或退出码信息。 已完成新版安装包构建并提供清空重装验证流程 涉及导入历史去重修复、安装包产物、版本同步与导入数据清理验证
+    该响应说明一次导入历史去重修复已经完成，并已重新打包出新的桌面安装程序。内容不仅确认了安装包产物、版本号、修复范围、提交记录和分支状态，还提供了一套从退出旧版程序、清空
+    imported 数据、安装新版本、重新触发导入，到最后使用脚本和数据库查询进行回归验证的完整操作步骤。重点验证目标是确保导入后的会话轮次与用户真实发送次数一致，并消除过去同一会话同轮次出现钩子记录与
+    imported 记录成对重复的问题。 已生成新的安装包，路径为 [REDACTED_PATH] 安装包大小约为 226 MB，与之前的测试版本体积一致。
+    本次安装包包含修复：导入时丢弃开发环境注入的元信息、紧凑信息和侧链用户行。 相关提交标识为 7b94644。 版本号为 2.1.0-beta.9，已同步写入
+    package.json 和 [REDACTED_PATH]。 相关改动已提交并推送到 [REDACTED_...'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1416
+    memory_session_id: session-0da603787d71
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-008
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想弄清楚为什么执行删除命令后模型目录被删掉了，但向量数据库相关文件没有删除。 本轮分析了删除失败的原因，重点排查文件是否被后台进程占用，以及静默错误参数是否掩盖了真实报错。
+    已给出诊断思路：先取消静默查看真实报错，再查找并结束相关进程，随后重新执行删除并验证结果。'
+  description: Real CBM case from agent-memory / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已给出诊断思路：先取消静默查看真实报错，再查找并结束相关进程，随后重新执行删除并验证结果。 让用户贴出非静默删除时报错和相关进程列表，[REDACTED_PATH]。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1743
+    memory_session_id: session-70aa0741f54c
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-009
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认截图后面是否还有内容被截断，以及当前看到的 system 提示词结尾是否完整。 检查了 OTel 请求体里的 system
+    与 messages 结构、JSON 闭合情况、60KB 截断机制表现，以及截图中代码块尾部的渲染现象。 确认了当前结尾就是真实结尾；解释了为何能从 JSON
+    结构判断未截断；澄清了截图异常是渲染问题而非数据缺失。'
+  description: Real CBM case from ai-ide-langfuse / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    确认了当前结尾就是真实结尾；解释了为何能从 JSON 结构判断未截断；澄清了截图异常是渲染问题而非数据缺失。 如需进一步自证，可继续对照原始转义 JSON
+    的结尾字符；也可在 messages 中检索首条用户消息，以反向验证 system 与对话内容的边界。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 787
+    memory_session_id: session-2ff80286f7a0
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-bugfix-010
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想找回那次使用 twine 上传 PyPI 镜像时报错的历史笔记。 回溯了与 twine 上传腾讯私有 PyPI 失败相关的历史排障记录，并核对了已有摘要信息。
+    找到了目标笔记，并确认其中包含错误现象、根因和修复结论。'
+  description: Real CBM case from ai-ide-langfuse / bugfix.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    找到了目标笔记，并确认其中包含错误现象、根因和修复结论。 可将这次 405 报错的根因与修复方法整理成固定排障模板；下次上传前先核对镜像地址与上传方式是否匹配。'
+  priority: critical
+  metadata:
+    category: bugfix
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 727
+    memory_session_id: session-e78353dca3b0
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - bug
+    - fix
+    - test
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-011
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想用 MCP 快速总结 agent-memory 项目近期的工作进展与当前重点。 查询了项目列表、近期会话与多批总结记录，重点梳理了版本演进、Codex
+    实时记忆适配、去重与实时链路修复等主题。 已基于 MCP 汇总近期工作脉络，提炼出阶段性成果、版本关系、当前修复结论与推荐验证方向。'
+  description: Real CBM case from agent-memory / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已基于 MCP 汇总近期工作脉络，提炼出阶段性成果、版本关系、当前修复结论与推荐验证方向。 建议优先用 2.0.27 做一次干净安装验证，确认实时写入与 summary
+    生成时机正常。随后再补充核对 Codex 场景下的去重与重启后行为是否稳定。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 2014
+    memory_session_id: session-e5c6fd441d54
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-012
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户希望通过 MCP 汇总该项目近期的工作进展与当前重点。 查询了项目与会话列表、历史记忆与摘要，重点梳理了近期版本演进、主线修复、Codex
+    适配以及安装验证状态。 已基于 MCP 信息完成近期工作总结，提炼出阶段主线、版本脉络、当前验证状态与主要风险点。'
+  description: Real CBM case from agent-memory / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已基于 MCP 信息完成近期工作总结，提炼出阶段主线、版本脉络、当前验证状态与主要风险点。 继续完成 2.0.27 的干净安装验证，确认 Codex 采集链路正常且无多余模块残留。随后再统一核对分支关系与交付口径，避免版本认知偏差。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 2010
+    memory_session_id: session-3c9f423e8a17
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-013
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求全面排查为什么 Codex 与 CBM 的实时记忆链路完全没有数据，并确认是工具名识别问题还是 [REDACTED_PATH]。
+    本轮检查了 CBM worker 健康状态、Codex 的 [REDACTED_PATH] 配置、运行中进程是否重载配置、日志是否收到 hook，以及数据库里是否存在
+    Codex 的 live session、observation 和 summary。 本轮完成了端到端定位、修复 Codex hook trust 与注册判定逻辑、通过相关测试并重新打包新安装包，同时给出需要重启
+    Codex 后再验证的结论。'
+  description: Real CBM case from agent-memory / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    本轮完成了端到端定位、修复 Codex hook trust 与注册判定逻辑、通过相关测试并重新打包新安装包，同时给出需要重启 Codex 后再验证的结论。
+    安装新包后完全退出并重启 Codex，再进行几轮交互，确认日志和数据库开始出现 Codex 的 live session、observation 与 summary。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1972
+    memory_session_id: session-d1794d3d007d
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-014
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求对 Codex 的 CBM 适配做全面补检，不仅确认混合检索 MCP 是否会自动写入 Codex，也要核实是否有像 Cursor
+    那样的 IDE 标识显示，并继续补齐缺口。 这一轮检查了 Codex 在 CBM 功能面上的适配完整性，重点审视了历史导入、MCP 自动注册、UI [REDACTED_PATH]
+    标识展示，以及相关配置与测试覆盖情况。 本轮完成了对适配目标的重新界定，并确认了当前实现中的关键缺口；同时开始继续补做历史导入、MCP 注册与 UI 标识相关检查和实现。'
+  description: Real CBM case from agent-memory / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    本轮完成了对适配目标的重新界定，并确认了当前实现中的关键缺口；同时开始继续补做历史导入、MCP 注册与 UI 标识相关检查和实现。 继续补齐 Codex 历史导入适配、修正混合检索
+    MCP 自动注册，并完成 UI 标识核对、测试验证与重新打包。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1947
+    memory_session_id: session-7bef087ecdde
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-015
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求基于指定远端分支在本地新建独立分支，仅追加 Codex 适配改动，不修改其他内容、不动 master、不推送远端，并在完成后打包成可安装的
+    exe 供验证。 本轮确认了目标分支基线与本地工作区隔离方案，检查了 Codex 适配、hooks 注册、trust 处理、测试与桌面打包链路，并在独立 worktree
+    中实施最小范围修改与验证。 已在本地新建并切换到基于指定分支的独立开发分支，完成 Codex 适配相关修改、通过测试与类型检查，并成功生成 Windows
+    安装包供用户安装验证。'
+  description: Real CBM case from agent-memory / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已在本地新建并切换到基于指定分支的独立开发分支，完成 Codex 适配相关修改、通过测试与类型检查，并成功生成 Windows 安装包供用户安装验证。 建议用户先安装
+    exe 进行功能验证；确认无误后，再决定是否整理当前未提交改动并进行提交或后续发布。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1945
+    memory_session_id: session-dffd355f473d
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-016
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想用 MCP 结合近期提交记录，快速总结该项目最近一段时间的工作进展。 查询了项目与历史会话摘要，并核对了 6 月上旬以来的 Git
+    提交时间线，用来交叉确认近期工作的主线与阶段重点。 已通过 MCP 与 Git 信息整理出近期工作的阶段性总结，归纳了功能演进、稳定性修复、交付物和当前状态，并形成可直接阅读的概览。'
+  description: Real CBM case from agent-memory / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已通过 MCP 与 Git 信息整理出近期工作的阶段性总结，归纳了功能演进、稳定性修复、交付物和当前状态，并形成可直接阅读的概览。 建议继续做安装、升级、卸载全链路复测，并在多
+    IDE 真实环境下确认来源标记与去重机制稳定。若用于对外汇报，可再压缩成一版按“进展、风险、待办”组织的简报。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1933
+    memory_session_id: session-cdf0f546b1ac
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-017
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求先做只读调研，弄清楚 CBM 在 Codex 场景下为何没有记录交互，并先给出执行方案而不是直接改代码。 本轮围绕 CBM
+    的 Codex 集成链路做了排查，包括 hook 安装位置、触发方式、transcript 解析、worker 写入、摘要生成，以及 embedding 与历史导入的实际架构。
+    本轮完成了无修改的代码与本机环境核查，初步定位了 Codex 集成的架构差异、当前未记录的可能断点，并形成了后续应提交方案的事实基础。'
+  description: Real CBM case from agent-memory / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    本轮完成了无修改的代码与本机环境核查，初步定位了 Codex 集成的架构差异、当前未记录的可能断点，并形成了后续应提交方案的事实基础。 下一步应输出一份不改代码的执行方案，按“运行入口识别、hook
+    触发验证、事件覆盖差距、[REDACTED_PATH]”四部分给出排查与改造路线。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1943
+    memory_session_id: session-932c7707c575
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-018
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求撤回刚才为避开额外 hook 注册所做的修改，恢复到修改前状态。 本轮检查了相关代码是否仍存在上一轮改动，并核对了本机与项目级
+    Codex 配置备份，随后执行恢复与验证。 已撤回刚才那组代码修改，并恢复本机 Codex 配置文件与项目 hook 配置；同时完成了解析与测试验证。'
+  description: Real CBM case from ai-ide-langfuse / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已撤回刚才那组代码修改，并恢复本机 Codex 配置文件与项目 hook 配置；同时完成了解析与测试验证。 如仍需解决“安装后会额外写入 hook 文件”的问题，建议改为先定位触发注册的具体流程，再做更小范围修复。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1940
+    memory_session_id: session-d62e6008b6af
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-eval_ab-019
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户希望从本地长期记忆库中筛选真实项目开发中的问题与缺陷案例，脱敏后封装成一个可复用、标准化的测试数据集。 查看了现有评测框架与配置方式，确认测试集需要兼容当前评测流水线；同时探查了本地长期记忆数据库的可用性、[REDACTED_PATH]。
+    形成了一个数据集构建方案：以真实记忆案例为来源，按问题类型筛样，输出标准化测试集与证据集，并与现有评测体系对齐；同时明确了脱敏、样本数量、断言形式和验收标准。'
+  description: Real CBM case from agent-quality-eval / eval_ab.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    形成了一个数据集构建方案：以真实记忆案例为来源，按问题类型筛样，输出标准化测试集与证据集，并与现有评测体系对齐；同时明确了脱敏、样本数量、断言形式和验收标准。
+    先实现一个只读的数据抽取与脱敏脚本，生成首版样本集；再用现有评测加载流程验证数据集可运行，并补充不易判定的案例过滤规则。 计划重构评估模块并对齐另一项目的第三版评估架构
+    限定只修改当前项目的评估部分，保留现有上方展示区并替换下方打分方案 决定先调研“letsgoagenteval”项目中的第三版评估框架，再据此重构当前项目的评估模块。重构目标是保留现有评估界面中的部分展示内容，但将下方主观的单一质量分替换为基于第三版标准的更全面评估方案，并补充更细粒度断言，同时把自动化评测流水线、甲乙对比测试和回归检测纳入设计范围。修改范围被限定在评估模块，不涉及其他部分。
+    用户要求查看磁盘中的“letsgoagenteval”项目，并重点参考其中的第三版评估框架。 用户明确指出当前项目现有评估内容过于主观，缺乏实际评测意义，且对任意项目或任意轨迹都可能给出相似评价。
+    用户要求保留现有界面中图二所示的上部内容，不保留当前下方以单一质量分为核心的评分方案。 用户要求新的评估方案基于第三版标准，补充更细致的断言设计。 用户要求新的评估设计同时考虑自动化评测流水线、甲乙对比测试、回归检测等能力。
+    用户要求先输出重构计划，再开始实施修改。 用户明确限制只能修改评估部分，其他模块不得改动。 明确线上评估应先识别任务意图再选择评分链路 围绕离线评测与真实用户轨迹的评估路由方式进行了区分
+    澄清了轨迹评估的分流原则：离线评测直接依据任务元数据选择评分链路，不必额外自动判类；线上真实用户轨迹则先分析任务意图、工具使用、能力标签和可验证结果，再组合通用与专项评分器。进一步否定了按单一智能体类别粗暴分流的做法，改为采用多标签能力建模，以覆盖研究、内容编辑、代码修改、对话约束和界面操作等混合任务。
+    离线评测场景通常不需要自动判定轨迹类别，因为任务在评估前已经带有任务类型、目标、预期结果和评分器配置等元数据。 线上真实用户轨迹需要先经过路由或分诊层...'
+  priority: high
+  metadata:
+    category: eval_ab
+    source_project: agent-quality-eval
+    source_table: session_summaries
+    source_row_id: 2059
+    memory_session_id: session-9ad87642157f
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - eval
+    - baseline
+    - candidate
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-eval_ab-020
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认第3版评估方案是否足以作为当前智能体评估的主方案，并覆盖基础质量检查、自动化流水线、回归检测与后续扩展需求。 梳理了评估体系中简单指标、v2、v3
+    的关系与适用边界，并进一步核查了 v3 在多提供方对比、自动化执行、历史回归和专项校验上的覆盖情况。 已明确给出 v2 与 v3 的选型建议，并确认应以 v3
+    为主、以默认断言替代旧版简单指标。还说明了 v3 已覆盖的能力范围，以及哪些能力需要额外脚本和工程配套实现。'
+  description: Real CBM case from letsgoagenteval / eval_ab.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已明确给出 v2 与 v3 的选型建议，并确认应以 v3 为主、以默认断言替代旧版简单指标。还说明了 v3 已覆盖的能力范围，以及哪些能力需要额外脚本和工程配套实现。
+    先按 v3 落一个最小可用评估配置，默认加入非空、无错、时延等基础断言。随后再补一层外部回归对比与历史记录脚本，形成可持续运行的评估流程。 明确 v3 以确定性断言替代
+    v2 简单指标 围绕评估配置方式，澄清 v2 与 v3 的能力映射和写法 澄清了一个关键概念：原先容易被认为可直接沿用的 v2“简单指标”并不适用于 v3，最终决定在
+    v3 中改用“确定性断言”完成基础质量检查。给出了一个最小可用的 YAML 配置思路：在提供方部分保留地址和令牌字段，其中令牌应脱敏为[REDACTED]；在默认断言中加入非空、无错和响应时间限制，以此作为所有测试题的兜底规则；对特定题目再单独补充包含匹配和正则匹配等断言。结果是基础评估可以在不调用大模型的情况下直接运行；若后续要覆盖语义质量，再额外添加“大模型评分规则”断言并配置阈值即可。
+    v2 的“简单指标”不能直接用于 v3。 v3 中与 v2“简单指标”等价的机制是“确定性断言”。 v3 可通过 defaultAssertions 配置基础断言，包括非空检查、无错检查和响应时间检查。
+    示例中的响应时间阈值配置为 180。 测试题可在每个 tests 条目下通过 assert 增加特定规则，如包含指定文本和正则匹配。 未单独编写 assert
+    的测试题会自动使用 defaultAssertions。 仅使用确定性断言即可完成零大模型调用的基础评估。 如需评估语义质量，可增加“大模型评分规则”断言，并设置评分阈值，示例阈值为
+    0.6。 提供方配置中令牌字段出现敏感信息占位需求，相关凭据应记为[REDACTED]。 梳理评估框架中 v2 与 v3 的选型差异及 Agent 适配方式
+    围绕评估配置模型、多 Agent 对比能力与不同 Agent 类型的断言组合进行了结论化说明 对评估框架的两版方案进行了对比，明确了 v2 是统一指标模式，v3
+    是按题配置断言模式，并据...'
+  priority: high
+  metadata:
+    category: eval_ab
+    source_project: letsgoagenteval
+    source_table: session_summaries
+    source_row_id: 2057
+    memory_session_id: session-94f4c6333fa6
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - eval
+    - baseline
+    - candidate
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-eval_ab-021
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认界面里为什么没有出现“Eval”入口，并修复子会话评估按钮未显示的问题。 排查了当前页面实际加载的前端资源、运行时配置、相关文案渲染逻辑，以及是否因为缓存导致仍显示旧界面。
+    确认了问题不是用户看错，而是旧缓存页面导致；已加入禁止缓存策略、更新前端构建产物并重启服务，新的子会话条应显示“Eval 评估”。'
+  description: Real CBM case from ai-ide-langfuse / eval_ab.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    确认了问题不是用户看错，而是旧缓存页面导致；已加入禁止缓存策略、更新前端构建产物并重启服务，新的子会话条应显示“Eval 评估”。 让用户关闭旧页面后重新打开新端口页面；如果仍异常，再强制刷新一次以确认是否还有残留缓存。
+    修复前端缓存导致子会话评分文案未更新的问题 涉及本地服务静态资源缓存控制、前端打包产物更新与可执行文件重新打包 截图展示的是本地网页中的旧界面状态，紫色的“#0/#1”子会话条右侧仍是“--分”，没有显示新的评估文案。排查后确认不是前端逻辑未修改，而是页面仍在使用旧缓存资源；服务端返回的脚本里其实已经包含子会话评估相关标记，但浏览器继续运行旧
+    bundle。为此，已在后端为 index.html 和静态资源增加禁止缓存设置，并重新生成新的前端打包文件名，同时把子会话文案改为更显眼的“Eval 评估”。重新构建、同步并重启后，本地验证页面已加载新资源文件，子会话条显示为“Eval
+    评估”，页面中可见 10 个评估按钮；随后也重新打包了可执行文件，并将访问入口切换到 8800 端口，避免继续使用旧的 8801 页面。 截图对应的页面实际加载的是旧前端资源，紫色子会话条右侧仍显示“--分”。
+    当前服务端返回的脚本中已经包含“tree-subsession-eval”，说明新前端代码已存在。 问题结论是浏览器仍在使用旧的已加载页面或缓存后的前端资源。
+    已将“Eval”文案调整为更明显的“Eval 评估”。 后端已对 index.html 和静态资源路径添加 no-store 与 no-cache 控制。
+    前端打包后的资源文件名已更新为“index-C1anyren.js”。 本地验证结果显示，新页面中的子会话条显示为“Eval 评估”，不再是“--分”。 本地实测页面存在
+    10 个“.tree-subsession-eval”按钮。 新的可执行文件已重新打包，路径为“[REDACTED_PATH] 当前重启后的服务地址为“[REDACTED_URL]
+    先前打开的旧页面地址是“127.0.0.1:8801”。'
+  priority: high
+  metadata:
+    category: eval_ab
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 2050
+    memory_session_id: session-8cb7214acba7
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - eval
+    - baseline
+    - candidate
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-eval_ab-022
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想删除自己名下五个允许分支中的 backup 分支，并梳理剩余四个分支围绕 CBM 功能的真实关系，同时确认本机各分支最终对应的安装包版本。
+    检查了仓库当前状态、远端与本地分支存在情况、worktree 占用情况，以及四个目标分支的代码差异、CBM 相关功能实现和本地打包产物版本信息。 删除了 backup
+    远端分支，并处理了本地被 worktree 占用后的分支清理；完成了四个分支的功能关系梳理，并确认了各分支在本机上的最终安装包版本。'
+  description: Real CBM case from agent-memory / eval_ab.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    删除了 backup 远端分支，并处理了本地被 worktree 占用后的分支清理；完成了四个分支的功能关系梳理，并确认了各分支在本机上的最终安装包版本。
+    建议把四个分支的功能定位和安装包版本整理成一张固定对照表；如需继续收敛分支，可再评估 live 线与融合线是否需要合并或保留独立发布。'
+  priority: high
+  metadata:
+    category: eval_ab
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 2023
+    memory_session_id: session-6e0911b1128f
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - eval
+    - baseline
+    - candidate
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-eval_ab-023
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想快速梳理当前缺陷修复分支到底做了哪些工作、修了哪些问题，以及它是否只包含修复而不含新功能。 检查了当前分支的定位与改动范围，并归纳近期缺陷修复主题，包括
+    IDE 标识一致性、安装作用域、包装脚本兼容性以及分类展示准确性。 完成了对分支修复内容的归类总结，明确了主要问题域、修复目标以及与功能分支的区别。'
+  description: Real CBM case from agent-memory / eval_ab.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    完成了对分支修复内容的归类总结，明确了主要问题域、修复目标以及与功能分支的区别。 建议按四类缺陷分别做回归验证；若目标是稳定发布，可优先基于该分支评估合并或测试。'
+  priority: high
+  metadata:
+    category: eval_ab
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1870
+    memory_session_id: session-b033117c8541
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - eval
+    - baseline
+    - candidate
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-build_release-024
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求产出一个新的可安装 exe 供验证，并修复前端刷新时会短暂弹出终端窗口的问题，实现后台静默运行。 本轮检查了打包入口、版本与构建方式，并排查前端刷新时触发的后台子进程链路，确认终端闪烁来自哪一段启动流程。
+    本轮完成了静默启动问题的定位与相关代码修补检查，编译校验通过，并打包出了新的 exe 供安装验证。'
+  description: Real CBM case from ai-ide-langfuse / build_release.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    本轮完成了静默启动问题的定位与相关代码修补检查，编译校验通过，并打包出了新的 exe 供安装验证。 建议安装新 exe 实机验证刷新时是否仍有闪屏；若仍出现，可继续补查安装后实际运行的子进程启动路径。'
+  priority: high
+  metadata:
+    category: build_release
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1971
+    memory_session_id: session-28307cd9aa7b
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - build
+    - package
+    - release
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-build_release-025
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认同事拉取指定分支后，是否能获得与当前版本一致且已包含全部修复的功能，并了解能否直接下载对应的可执行文件。 核实了两个远端分支的最新提交状态，并确认发布目录中的可执行文件是否属于仓库跟踪内容。
+    已明确说明代码层面的修复已在远端分支中，但安装包需要由同事本地构建或通过制品渠道单独分发。'
+  description: Real CBM case from agent-memory / build_release.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已明确说明代码层面的修复已在远端分支中，但安装包需要由同事本地构建或通过制品渠道单独分发。 建议将安装包上传到制品库、持续集成产物或共享发布位置，方便同事直接获取。'
+  priority: high
+  metadata:
+    category: build_release
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1963
+    memory_session_id: session-0920a7ec934b
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - build
+    - package
+    - release
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-build_release-026
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户希望在不改动 master 的前提下，同时产出两个可验证安装包：一个基于功能分支继续修复并推送远端，另一个新分支只包含 master
+    现存缺陷修复、不带其新增功能。 核对了两个分支的构建与安装配置、历史提交和可追溯修复范围，确认哪些修复可安全迁移到仅修 bug 分支，并分别验证了 Windows
+    打包结果。 已在功能分支完成修复、提交并推送远端；已创建仅修复 master 现存问题的新分支并推送远端；两个分支都已成功打包出可供验证的 exe，且确认全程未改动
+    master。'
+  description: Real CBM case from agent-memory / build_release.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已在功能分支完成修复、提交并推送远端；已创建仅修复 master 现存问题的新分支并推送远端；两个分支都已成功打包出可供验证的 exe，且确认全程未改动 master。
+    建议分别安装两个包做对比验证：一个验证完整功能，一个验证纯 bug 修复效果。若验证通过，再分别发起对应合并请求或进入发布流程。 完成记忆去重与摘要重复生成修复并交付两个安装包
+    在 SDKAgent 与数据库层同时加入观测去重、摘要串行化和唯一性兜底 已完成重复观测与重复摘要问题的修复，并产出两个可安装版本。应用层在 SDKAgent
+    中加入观测签名进行中占位，能在模型调用前拦截同会话同签名的并发写入；同时对摘要生成做会话级串行化，并在“上次摘要后没有新观测”时直接跳过，从而消除停止钩子抖动带来的重复摘要。数据库层增加观测签名唯一约束与按分钟限制摘要唯一的兜底规则，插入逻辑改为忽略重复并向上层返回未写入状态。针对已有历史重复数据导致唯一索引无法建立的情况，决定降级为普通索引，保证新装环境可正常建表，同时依赖应用层去重继续生效。最终交付纯修复版和完整功能版两个安装包，两个分支均已推送，主分支未动。对已出现的成对重复、三连重复、分钟内双摘要、单会话大量摘要重复，以及
+    codebuddy 端相同现象，均给出对应拦截路径。对 claude 一层级缺失问题，判断修复后先观察新包表现；若在未重复执行的命令下仍缺失，更应排查重复注册而非继续追查当前去重逻辑。
+    SDKAgent 的 processObservation 新增按 会话标识:签名 维度的进行中签名集合，在最近签名检查通过后立即占位，并在结束时释放，第二个同签名并发调用会在模型调用前被直接丢弃。
+    SDKAgent 的 generateSummary 新增按会话维度的进行中摘要集合，实现同会话摘要串行化。 generateSummary 增加无新观测保护：当最新摘要时间不早于最新观测时间时，直接跳过摘要生成。
+    processObservation 与 generateSummary 都改为外层负责占位与释放、内层执行实际逻辑，避免多返回路径造成清理遗漏。...'
+  priority: high
+  metadata:
+    category: build_release
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1866
+    memory_session_id: session-575c72a7ff6c
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - build
+    - package
+    - release
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-build_release-027
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户这一轮是在查看“最终 exe 构建完成”后的交付结果与安装验证说明。 本轮确认了最终安装包已成功生成，并汇总了该版本包含的修复内容、复测步骤以及对后续用户升级体验的影响。
+    已交付最终安装包，说明了包含的关键修复，并给出了本机复测与异常回报方式。'
+  description: Real CBM case from agent-memory / build_release.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已交付最终安装包，说明了包含的关键修复，并给出了本机复测与异常回报方式。 按给出的顺序完成卸载、安装、重启 IDE 和诊断验证；若仍有来源标记异常，再提交诊断输出。'
+  priority: high
+  metadata:
+    category: build_release
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1848
+    memory_session_id: session-10c180b1a165
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - build
+    - package
+    - release
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-build_release-028
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认近期做的路径相关修复是否存在硬编码，避免产品发布后依赖开发者本机环境。 本轮核查了提交中的产品代码路径来源是否为运行时动态计算，并区分了产品代码与仅供本机诊断的脚本。
+    已完成一次针对该问题的审计性说明，并给出结论：当前提交的产品代码不存在按开发者本机写死路径的情况。'
+  description: Real CBM case from agent-memory / build_release.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已完成一次针对该问题的审计性说明，并给出结论：当前提交的产品代码不存在按开发者本机写死路径的情况。 可进一步全量扫描相关源码目录，继续排查是否还有历史遗留的硬编码路径。'
+  priority: high
+  metadata:
+    category: build_release
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1837
+    memory_session_id: session-8ddaa9b539f8
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - build
+    - package
+    - release
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-negative-029
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想用 MCP 汇总该项目近期的工作进展与当前状态。 查询了项目列表、近期会话摘要、记忆统计与相关记忆，并补充排查了一个 CBM
+    Worker 因缺少观察 ID 导致的时间线请求报错。 基于 MCP 数据完成了项目近期工作的阶段性总结，并识别出一个时间线请求参数缺失的缺陷原因。'
+  description: Real CBM case from agent-memory / negative.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Must not claim
+    the issue is fully fixed when the case says it is unresolved, cached, blocked,
+    or missing validation. Case evidence: 基于 MCP 数据完成了项目近期工作的阶段性总结，并识别出一个时间线请求参数缺失的缺陷原因。
+    继续验证最新精简版在真实会话中的实时写入与去重表现；修复并复测 CBM Worker 请求中观察 ID 的传递逻辑。 CBM Worker返回HTTP 400错误，缺少观察ID
+    涉及API时间线功能 发现CBM Worker在请求时间线时返回错误，原因是缺少必要的观察ID参数。 CBM Worker返回HTTP 400错误，提示缺少观察ID
+    {"result":"{\"content\":[{\"type\":\"text\",\"text\":\"CBM Worker returned HTTP
+    400 for /[REDACTED_PATH]\\n\\n{\\n \\\"error\\\": \\\"anchor (observation ID)
+    is required\\\"\\n}\"}],\"isError\":true}","duration":19.112}'
+  priority: critical
+  metadata:
+    category: negative
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 2020
+    memory_session_id: session-3dc30a9dcfaf
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - not
+    - blocked
+    - risk
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-negative-030
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求在安装新版本时，只静默杀掉并重启观测项目自身的后端，绝不能影响其他项目或其他用户的后端进程。 本轮收紧了升级接管逻辑的进程识别范围，并验证
+    Windows 下无窗口静默启动、替换旧后端、清理残留进程树以及新版前后端联通是否正常。 已将处理范围限制为观测项目专属后端，改为静默无窗口启动与清理，并完成最终打包验证，产出可用的
+    1.0.15 版本安装包。'
+  description: Real CBM case from ai-ide-langfuse / negative.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Must not claim
+    the issue is fully fixed when the case says it is unresolved, cached, blocked,
+    or missing validation. Case evidence: 已将处理范围限制为观测项目专属后端，改为静默无窗口启动与清理，并完成最终打包验证，产出可用的
+    1.0.15 版本安装包。 后续可在更多真实多项目并存场景下继续回归验证，确认不会误伤边界案例。'
+  priority: critical
+  metadata:
+    category: negative
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1974
+    memory_session_id: session-ef5ac865ea38
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - not
+    - blocked
+    - risk
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-negative-031
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求排查 Codex trace 中 thinking phase 与 final response 的重复展示歧义，并把平台相关文案统一改名。
+    [REDACTED_PATH]，以及 Codex rollout 的抽取与去重流程，确认问题不应只在界面层遮盖，还需要在采集转换层处理。 已在 Codex
+    collector 中加入累积快照去重逻辑，只保留更完整的 [REDACTED_PATH] 记录；并将顶部文案改为“Agent Observation ·
+    Agent 观测平台”，完成构建与基础验证。'
+  description: Real CBM case from ai-ide-langfuse / negative.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Must not claim
+    the issue is fully fixed when the case says it is unresolved, cached, blocked,
+    or missing validation. Case evidence: 已在 Codex collector 中加入累积快照去重逻辑，只保留更完整的 [REDACTED_PATH]
+    记录；并将顶部文案改为“Agent Observation · Agent 观测平台”，完成构建与基础验证。 建议用真实历史 session 再回归确认刷新后的展示效果，并继续检查是否还有类似累积快照造成的重复节点。'
+  priority: critical
+  metadata:
+    category: negative
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1970
+    memory_session_id: session-54bb183c80ac
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - not
+    - blocked
+    - risk
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-negative-032
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认当前 CBM 安装后是否会自动把已有的 Codex 历史会话导入进来，以决定现在要不要安装 exe。 这一轮检查了桌面启动后的历史导入触发链路、当前支持的导入适配器，以及本机是否存在可导入的
+    Codex 历史会话。 已明确给出结论：现在先不要安装来验证 Codex 历史导入，因为该能力当前还没实现，只支持后续通过 hooks 进入的新对话。'
+  description: Real CBM case from agent-memory / negative.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Must not claim
+    the issue is fully fixed when the case says it is unresolved, cached, blocked,
+    or missing validation. Case evidence: 已明确给出结论：现在先不要安装来验证 Codex 历史导入，因为该能力当前还没实现，只支持后续通过
+    hooks 进入的新对话。 后续可补充 Codex 历史导入适配器并重新打包，完成后再让用户安装验证。'
+  priority: critical
+  metadata:
+    category: negative
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1946
+    memory_session_id: session-1125bf9947d6
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - not
+    - blocked
+    - risk
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-negative-033
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求通过 wiki 的 MCP 把两份 iWiki 文档更新：替换一页的第二章为当前 exe 安装版、将 Codex 修改增量写入第七章，并把近期修
+    bug 与版本迭代记录写入另一页。 本轮主要核查了当前会话是否有可用的 [REDACTED_PATH] 工具，并检查仓库里历史遗留的上传脚本、临时文档和页面草稿，确认是否能直接复用现有链路完成发布。
+    已梳理出需要更新的页面范围、可用的本地文档素材，以及本次应写入的版本与修复要点；同时确认了本轮卡点在缺少可用的 iWiki 发布通道。'
+  description: Real CBM case from ai-ide-langfuse / negative.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Must not claim
+    the issue is fully fixed when the case says it is unresolved, cached, blocked,
+    or missing validation. Case evidence: 已梳理出需要更新的页面范围、可用的本地文档素材，以及本次应写入的版本与修复要点；同时确认了本轮卡点在缺少可用的
+    iWiki 发布通道。 继续查找真实可用的 iWiki 上传入口或 MCP 配置；若拿到可用发布链路，再按已整理内容更新两页文档。'
+  priority: critical
+  metadata:
+    category: negative
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1956
+    memory_session_id: session-ca914a3a8d80
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - not
+    - blocked
+    - risk
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-research_or_diagnosis-034
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想了解 subagent 是什么，以及在 Codex、Claude Code 中能否自定义、如何定义、能否定义多个、自动调用与手动定义的区别。
+    调研并对比了 Codex CLI、Claude Code、Cursor 三种系统里的子代理机制，包括定义方式、调用逻辑、是否支持自动委派以及自定义能力。 完成了
+    subagent 概念说明；梳理了 Codex、Claude Code、Cursor 的定义与调用差异；回答了“能否多个”“为什么还要手动定义”等核心问题。'
+  description: Real CBM case from ai-ide-langfuse / research_or_diagnosis.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    完成了 subagent 概念说明；梳理了 Codex、Claude Code、Cursor 的定义与调用差异；回答了“能否多个”“为什么还要手动定义”等核心问题。
+    可以进一步给用户整理一份“Codex 与 Claude Code 的自定义 subagent 最佳实践对照表”。也可以按用户常见场景直接设计 2-4 个可落地的
+    agent 方案，如代码审查、安全检查、文档整理。 梳理三种系统中子代理的定义与调用差异 比较了 Codex CLI、Claude Code、Cursor
+    IDE 的子代理配置方式、自动委派机制与使用限制 完成了一次关于子代理机制的调研说明，系统整理了 Codex CLI、Claude Code 与 Cursor
+    IDE 中子代理的定义方式、存放目录、配置格式、调用方式和限制条件。结论上明确了 Codex CLI 需要显式指示才会使用自定义子代理，而 Claude Code
+    与 Cursor 可以依据描述自动委派。还给出了从少量角色开始配置的建议，并提供了安全审查子代理的完整示例配置方向。 子代理是面向特定任务的专门化代理，主代理可将部分工作委派给子代理并行或串行处理。
+    手动定义自定义子代理的目的包括专业化指令、权限控制、成本优化和并行处理。 Codex CLI 的子代理定义位置为用户级“~/.[REDACTED_PATH]/”或项目级“.[REDACTED_PATH]/”，文件格式为
+    TOML。 Codex CLI 的必填字段包括名称、描述和开发者指令；可选字段包括模型、推理强度、沙箱权限模式和绑定的工具服务。 Codex CLI 不会自动调用自定义子代理，需在提示中明确要求委派或启动对应子代理。
+    Claude Code 的子代理定义位置为“~/.[REDACTED_PATH]/”或“.[REDACTED_PATH]/”，文件格式为 Markdown
+    加 YAML 头信息。 Claude Code 支持根据子代理描述自动委派，也支持通过显式点名方式手动调用。 Cursor IDE 提供通用、探索、命令执行、文档查询和多方案并行等内置子代理类...'
+  priority: high
+  metadata:
+    category: research_or_diagnosis
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1932
+    memory_session_id: session-2e6ff520e90f
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - diagnosis
+    - evidence
+    - next step
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-research_or_diagnosis-035
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想确认助手为什么无法访问公司 Git 网页，并了解需要具备哪些权限或条件。 这一轮讨论了企业内网 Git 服务无法直接访问的原因，以及可行的访问前提和替代协作方式。
+    本轮已说明无法访问的主要原因，并列出所需条件，包括内网或 VPN、认证凭据、本地仓库副本或直接提供相关内容。'
+  description: Real CBM case from agent-memory / research_or_diagnosis.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    本轮已说明无法访问的主要原因，并列出所需条件，包括内网或 VPN、认证凭据、本地仓库副本或直接提供相关内容。 如果用户本机已具备仓库访问能力，可改为让助手读取本地代码或粘贴相关片段继续分析。'
+  priority: high
+  metadata:
+    category: research_or_diagnosis
+    source_project: agent-memory
+    source_table: session_summaries
+    source_row_id: 1964
+    memory_session_id: session-a32f9f8085d4
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - diagnosis
+    - evidence
+    - next step
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-research_or_diagnosis-036
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想先在本地把蒸馏流程跑起来，并确认数据该如何获取、是否能蒸馏他人数据，以及去哪里申请相关平台令牌。 排查了本地蒸馏命令是否存在、蒸馏流程是否能脱离运行时单独执行，并梳理了数据来源方式与令牌获取入口。
+    给出了本地跑蒸馏的可行结论、说明了自己数据与他人数据的获取边界，并提供了令牌申请方向与建议执行顺序。'
+  description: Real CBM case from shadow-folk / research_or_diagnosis.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    给出了本地跑蒸馏的可行结论、说明了自己数据与他人数据的获取边界，并提供了令牌申请方向与建议执行顺序。 先用本地只验证流程的方式跑通一次；同时联系数据所有者确认是否能导出可用数据，再按需申请平台令牌。
+    发生了一次文件编辑操作 记录到文件被修改，但未提供具体文件路径或变更内容 本次会话中发生了文件编辑操作，说明代码库或相关文本内容被修改。虽然当前记录未包含具体文件路径、修改内容或结果信息，但该事件本身仍然具有追踪价值，可用于还原开发活动时间线、识别变更发生节点，并为后续关联功能实现、缺陷修复或配置调整提供线索。
+    在2026-05-28T13:10:30.652Z发生了一次文件编辑事件 事件类型为文件编辑 未提供操作参数详情 未提供执行结果详情 未观察到可记录的敏感信息
+    发生一次文件编辑操作 主会话记录到文件被修改，但未提供具体文件路径与编辑内容 系统捕获到一次明确的文件编辑操作。虽然当前上下文没有包含具体修改内容、目标文件或变更结果，但这仍然是一次应当保留的重要开发活动记录，因为文件修改通常意味着功能实现、缺陷修复、配置调整或文档更新中的某一步骤已经发生。记录该事件有助于后续将时间点与其他操作、响应或结果关联起来。
+    在 2026-05-28T13:08:46.897Z 发生了一次文件编辑事件。 事件类型为 file_edit。 本次记录未提供参数详情。 本次记录未提供执行结果详情。
+    未提供被修改文件的具体路径。 记录到一次文件编辑操作 主会话在文件编辑钩子中发生了代码或文本修改行为 此次观察明确表明主会话中发生了文件修改行为。虽然未附带具体文件路径、修改内容或执行结果，但文件编辑本身是重要开发信号，通常意味着代码实现、配置调整、文档更新或缺陷修复正在进行中。记录这一事件有助于保留开发过程轨迹，便于后续关联任务进展与变更历史。
+    在 2026-05-28T13:08:46.789Z 发生了一次文件编辑事件。 事件类型为 file_edit。 钩子类型为 file_edit。 参数信息为空对象，未提供具体编辑上下文。
+    执行结果为空对象，未提供具体修改详情。'
+  priority: high
+  metadata:
+    category: research_or_diagnosis
+    source_project: shadow-folk
+    source_table: session_summaries
+    source_row_id: 447
+    memory_session_id: session-06afd2e94434
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - diagnosis
+    - evidence
+    - next step
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-research_or_diagnosis-037
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想重写日报生成提示词，压缩企业微信日报长度，避免消息被截断，并强制同一人当天多次提交只汇总为最终版。 查看了定时任务产出的日报样例，分析了内容超长的原因；识别出问题主要来自多人详细展开、表格结构冗长，以及像
+    milkwang 这类按时间批次重复总结导致篇幅膨胀。 产出了一版优化后的 System Prompt；加入了总字数上限、单人行数限制、禁止表格和元信息、多人多批次合并为最终版等规则；同时说明了这些改动分别解决截断和重复总结问题。'
+  description: Real CBM case from shadow-folk / research_or_diagnosis.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    产出了一版优化后的 System Prompt；加入了总字数上限、单人行数限制、禁止表格和元信息、多人多批次合并为最终版等规则；同时说明了这些改动分别解决截断和重复总结问题。
+    可继续增加“超过指定人数时自动降级为极简格式”的规则；也可以补一版更适合 企微 markdown 卡片 或普通文本消息 的专用 prompt。 定时任务生成多位同事前一日工作日报汇总
+    基于可见项目与影子数据源，对多名同事在2026年5月21日的工作内容进行汇总 这次记录展示了一次自动化日报汇总任务的输出结果，核心价值在于把多位同事分散在不同项目、分支和任务中的工作进展整合为统一视图。内容覆盖了功能开发、缺陷修复、文档补充、架构调研、迁移执行、打包流程重构以及插件排障等多个维度，能够帮助团队快速了解前一天的重要产出与风险点。尤其值得注意的是，报告不仅给出了“谁做了什么”，还包含验证状态、问题根因、方案选择和提交规模等信息，说明该类定时任务已具备较强的工程过程可追踪性。虽然其中一部分内容因消息长度限制被截断，但整体已足以作为团队同步和管理决策的高价值摘要。
+    此次内容为一条定时任务报告，执行时间为2026-05-22 10:00:00。 报告中说明在当前可见的所有项目中没有名为fortyfei的人员。 系统已收集到4位同事在2026-05-21的工作信息，并开始生成总结。
+    日报汇总的查询时间范围为2026-05-21全天，数据来源为shadowfolk。 minusjiang在agent-memory的master分支完成工作区记忆别名功能合并，并在迁移后保留旧记忆根路径与当前Git身份。
+    minusjiang修复了重启后“上次同步”误显示为“从未”的问题，方法是将上传成功时间持久化存储。 minusjiang新增了workspace alias迁移支持文档和项目对比说明文档。
+    minusjiang完成了TypeScript类型检查、关键回归测试和Windows发布构建验证，并已推送2个提交到master。 hughesli在dpar-portal中完成资产目录按subgroup分组展示功能，支持...'
+  priority: high
+  metadata:
+    category: research_or_diagnosis
+    source_project: shadow-folk
+    source_table: session_summaries
+    source_row_id: 436
+    memory_session_id: session-e40bf631d4af
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - diagnosis
+    - evidence
+    - next step
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-research_or_diagnosis-038
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想判断当前蒸馏结果是否已足以充当“影子”，是否还有必要继续做RAG，并想知道现在生成的L0蒸馏结果应去哪里查看。 分析了当前蒸馏系统与完整RAG之间的关系，区分了检索、上下文注入和生成三层能力；同时梳理了当前可直接查看L0样例结果的现有材料与结果载体。
+    已给出对“是否还需要RAG”的阶段性判断，明确指出哪些扩展有价值、哪些属于画蛇添足；也已说明当前应优先去看真实L0案例和已有输出结果来感受蒸馏效果。'
+  description: Real CBM case from shadow-folk / research_or_diagnosis.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已给出对“是否还需要RAG”的阶段性判断，明确指出哪些扩展有价值、哪些属于画蛇添足；也已说明当前应优先去看真实L0案例和已有输出结果来感受蒸馏效果。 先直接抽样查看现有L0真实案例，确认结构质量、覆盖面和可读性；若效果满意，下一步优先补生成层与服务接口，而不是重做蒸馏或引入更重的知识系统。
+    发生了一次文件编辑操作 主会话记录到文件修改事件，但未提供具体文件路径或变更内容 系统观察到一次明确的文件编辑操作。尽管当前记录未包含编辑目标、修改内容或执行结果细节，但该事件本身表明项目文件发生了变更，属于应当保留的重要开发活动记录。这类信息有助于后续关联功能开发、缺陷修复或配置调整的上下文。
+    在 2026-05-21T09:33:18.592Z 发生了一次文件编辑事件。 事件类型为 file_edit。 参数信息为空对象。 结果信息为空对象。 未提供被修改文件的路径、名称或具体变更内容。
+    记录到一次文件编辑操作 主会话中发生了文件修改事件，但未提供具体文件与变更内容 系统捕获到一次文件编辑操作。虽然缺少具体文件路径、改动内容和执行结果，但该事件本身表明会话中存在实际的文件修改行为。记录这类操作有助于还原开发过程、关联后续问题排查，并补充任务执行时间线。
+    在 2026-05-21T09:33:18.649Z 发生了一次文件编辑事件。 事件类型为 file_edit。 本次记录中的参数信息为空对象。 本次记录中的结果信息为空对象。
+    未提供被修改文件的具体路径。 未提供编辑内容、差异详情或修改原因。 发生了一次文件编辑操作 主会话记录到文件修改事件，但未提供具体文件路径与内容变更细节 系统捕获到一次文件编辑行为。虽然缺少具体文件名、改动内容和执行结果，但这仍然是一次有效的开发活动信号，说明会话中进行了某种文件层面的修改。记录该事件有助于保留操作轨迹，为后续关联代码变更、任务推进或问题排查提供时间线依据。
+    在 2026-05-21T09:32:49.300Z 发生了一次文件编辑事件。 事件类型为 file_edit。 此次记录中的参数为空对象。 此次记录中的结果为空对象。
+    当前未提...'
+  priority: high
+  metadata:
+    category: research_or_diagnosis
+    source_project: shadow-folk
+    source_table: session_summaries
+    source_row_id: 388
+    memory_session_id: session-99f47a963803
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - diagnosis
+    - evidence
+    - next step
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-039
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户要求直接修改相关逻辑，并确保避开 Codex 的高风险配置写入，防止 Codex 无法打开或界面不显示会话。 本轮检查了 Codex
+    的安装、启动与配置写入路径，重点确认是否会自动写入 hook [REDACTED_PATH]，同时补充了回归测试与本机状态清理。 已直接完成代码修改、补上回归测试并通过相关测试检查；同时清理了本机全局和项目中的
+    Codex [REDACTED_PATH]，保留了备份，降低再次触发风险。'
+  description: Real CBM case from ai-ide-langfuse / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    已直接完成代码修改、补上回归测试并通过相关测试检查；同时清理了本机全局和项目中的 Codex [REDACTED_PATH]，保留了备份，降低再次触发风险。
+    建议用户重启 Codex 验证是否恢复正常；后续若需要观测能力，应采用不会写入 Codex 风险配置的安全方案。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1938
+    memory_session_id: session-b101f5070eb4
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true
+- id: cbm-tool_trace-040
+  question: 'Analyze this redacted real development case and produce a release-quality
+    answer. Your answer must explain the user problem, likely root cause, fix or evaluation
+    approach, validation evidence, and remaining regression risk.
+
+
+    Case brief: 用户想弄清楚：在未信任这些 hook 的情况下，为什么观测前端依然能看到 trace。 这一轮讨论了未信任 hook 与 trace
+    展示之间的关系，并分析 trace 可能来自历史数据、其他采集链路或仍然生效的受管机制。 本轮解释了为什么“未信任 hook”后仍可能看到 trace，并给出通过重启后发送新消息来区分新增采集与历史数据显示的验证思路。'
+  description: Real CBM case from ai-ide-langfuse / tool_trace.
+  expected_answer: 'Must identify the concrete problem or user request. Must explain
+    the investigated evidence or likely root cause. Must describe the completed fix,
+    evaluation approach, or why it remains blocked. Must mention validation or regression
+    checks. Must preserve privacy and not invent unobserved evidence. Case evidence:
+    本轮解释了为什么“未信任 hook”后仍可能看到 trace，并给出通过重启后发送新消息来区分新增采集与历史数据显示的验证思路。 重启相关进程后发送一条全新测试消息，检查是否出现新的
+    trace；若仍出现，再排查其他采集链路或受管 hook。'
+  priority: high
+  metadata:
+    category: tool_trace
+    source_project: ai-ide-langfuse
+    source_table: session_summaries
+    source_row_id: 1939
+    memory_session_id: session-b0b8cfa2b560
+  assert:
+  - type: keywords
+    value:
+    - problem
+    - root cause
+    - validation
+    - regression
+    - risk
+    - trace
+    - tool
+    - evidence
+    all_required: false
+    threshold: 0.5
+  - type: not-contains
+    value: 直接发布即可
+  - type: not-contains
+    value: 无需验证
+  - type: llm-rubric
+    value: The answer should be grounded in the case brief, include problem/root-cause/fix-or-plan/validation/regression-risk,
+      avoid unsupported claims, and avoid exposing secrets.
+    threshold: 0.7
+    optional: true

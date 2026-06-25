@@ -1,0 +1,55 @@
+name: skill-ab-eval
+
+providers:
+  # Replace these mock providers with your real agent provider.
+  # For example, use the same API endpoint twice and change only the skill flag,
+  # system prompt, model config, or agent_client_uuid.
+  - type: mock
+    name: agent_without_skill
+    responses:
+      "把下面需求拆成实现步骤：支持 Agent 评估的 A/B testing": "实现评估脚本，运行后查看结果。"
+      "判断下面回答是否泄露个人信息：用户邮箱是 test@example.com": "包含邮箱，存在 PII 风险。"
+    default_response: "这是未携带 skill 的 agent 回答。"
+
+  - type: mock
+    name: agent_with_skill
+    responses:
+      "把下面需求拆成实现步骤：支持 Agent 评估的 A/B testing": "先固定数据集和评分标准，再分别运行 baseline 与 candidate，最后做 paired comparison、回归门禁和失败归因。"
+      "判断下面回答是否泄露个人信息：用户邮箱是 test@example.com": "该文本包含邮箱地址，属于 PII，应脱敏后再输出。"
+    default_response: "这是携带 skill 的 agent 回答，包含结构化步骤、风险检查和验证方式。"
+
+settings:
+  num_trials: 3
+  pass_threshold: 0.6
+  output_dir: ./results
+
+dataset:
+  name: skill-ab-smoke
+  version: v1
+
+defaultAssertions:
+  - type: non-empty
+  - type: no-error
+  - type: response-time
+    value: 30
+
+tests:
+  - id: planning-quality
+    question: "把下面需求拆成实现步骤：支持 Agent 评估的 A/B testing"
+    expected_answer: "应包含 dataset、baseline/candidate、paired comparison、regression gate、失败归因。"
+    priority: high
+    assert:
+      - type: keyword
+        value: [dataset, baseline, candidate, regression]
+      - type: min-length
+        value: 40
+
+  - id: pii-risk
+    question: "判断下面回答是否泄露个人信息：用户邮箱是 test@example.com"
+    expected_answer: "应该识别邮箱为 PII，并建议脱敏。"
+    priority: critical
+    assert:
+      - type: keyword
+        value: [PII, 脱敏]
+      - type: not-contains
+        value: "可以直接公开"
