@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { SessionOverview, SessionCoT, ResponseReport, UplinkUserSummary, TurnEvalReport } from '../types';
+import type { SessionOverview, SessionCoT, ResponseReport, UplinkUserSummary, TurnEvalReport, EvalEvent } from '../types';
 
 // API base URL resolution.
 //
@@ -158,20 +158,66 @@ export const api = {
     return axios.get(`${API_BASE}/api/evals/turn-reports${qs}`).then(r => r.data);
   },
 
+  listEvalEvents: (params?: { event_type?: string; project_id?: string; has_gold?: boolean; limit?: number }): Promise<{ events: EvalEvent[] }> => {
+    const qs = new URLSearchParams();
+    if (params?.event_type) qs.set('event_type', params.event_type);
+    if (params?.project_id) qs.set('project_id', params.project_id);
+    if (typeof params?.has_gold === 'boolean') qs.set('has_gold', String(params.has_gold));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return axios.get(`${API_BASE}/api/evals/events${suffix}`).then(r => r.data);
+  },
+
   getLiveCritic: (sessionId: string): Promise<any> =>
     axios.get(`${API_BASE}/api/evals/live/${sessionId}`).then(r => r.data),
 
   getLiveCriticTurn: (sessionId: string, turnIndex: number): Promise<any> =>
     axios.get(`${API_BASE}/api/evals/live/${sessionId}/turn/${turnIndex}`).then(r => r.data),
 
-  compareTurns: (baseline: { session_id: string; turn_index: number }, candidate: { session_id: string; turn_index: number }): Promise<any> =>
-    axios.post(`${API_BASE}/api/evals/turn-compare`, { baseline, candidate }).then(r => r.data),
+  compareTurns: (
+    baseline: { session_id: string; turn_index: number },
+    candidate: { session_id: string; turn_index: number },
+    mode: 'ab' | 'regression' = 'ab',
+    reference_answer?: any,
+    blind?: boolean,
+  ): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/turn-compare`, { baseline, candidate, mode, reference_answer, blind: !!blind }).then(r => r.data),
+
+  uploadTrace: (body: { source: string; title?: string; trace: any; transcript?: string }): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/upload-trace`, body).then(r => r.data),
+
+  getTurnReferenceAnswer: (sessionId: string, turnIndex: number): Promise<any> =>
+    axios.get(`${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/reference-answer`).then(r => r.data),
+
+  saveTurnReferenceAnswer: (sessionId: string, turnIndex: number, filename: string, content: string): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/reference-answer`, { filename, content }).then(r => r.data),
+
+  deleteTurnReferenceAnswer: (sessionId: string, turnIndex: number): Promise<any> =>
+    axios.delete(`${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/reference-answer`).then(r => r.data),
+
+  normalizeReferenceAnswer: (filename: string, content: string): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/reference-answer/normalize`, { filename, content }).then(r => r.data),
+
+  listReferenceDatasets: (): Promise<{ datasets: any[] }> =>
+    axios.get(`${API_BASE}/api/evals/reference-datasets`).then(r => r.data),
+
+  getReferenceDataset: (datasetId: string): Promise<any> =>
+    axios.get(`${API_BASE}/api/evals/reference-datasets/${encodeURIComponent(datasetId)}`).then(r => r.data),
+
+  uploadReferenceDataset: (filename: string, content: string): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/reference-datasets/upload`, { filename, content }).then(r => r.data),
+
+  runReferenceEval: (body: { session_id: string; turn_index: number; dataset_id: string; case_id?: string | null }): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/reference-eval`, body).then(r => r.data),
 
   getCriticSettings: (): Promise<any> =>
     axios.get(`${API_BASE}/api/evals/settings/critic`).then(r => r.data),
 
   saveCriticSettings: (body: any): Promise<any> =>
     axios.put(`${API_BASE}/api/evals/settings/critic`, body).then(r => r.data),
+
+  getUiEvents: (): Promise<{ settings_open_seq: number }> =>
+    axios.get(`${API_BASE}/api/evals/ui/events`).then(r => r.data),
 
   getHookHealth: (): Promise<any> =>
     axios.get(`${API_BASE}/api/evals/hook-health`).then(r => r.data),

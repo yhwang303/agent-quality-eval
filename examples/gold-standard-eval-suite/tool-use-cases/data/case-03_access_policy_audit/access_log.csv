@@ -1,0 +1,11 @@
+user_id,resource_id,permission,last_access,granted_by,ticket_id
+u001,r_payroll,read,2026-06-28,iam-bot,REQ-100
+u004,r_payroll,read,2026-06-29,iam-bot,REQ-101
+u002,r_source,write,2026-06-27,repo-admin,CHG-19
+u006,r_source,write,2026-06-29,repo-admin,CHG-20
+u005,r_contracts,read,2026-06-28,legal-ops,REQ-102
+u003,r_contracts,write,2026-06-26,legal-ops,CHG-44
+u002,r_pipeline,admin,2026-06-29,platform-lead,ENG-77
+u008,r_crm,export,2026-06-28,sales-ops,REQ-103
+u007,r_payroll,export,2026-06-27,hr-ops,DPO-91
+u006,r_crm,read,2026-06-28,sales-ops,REQ-104

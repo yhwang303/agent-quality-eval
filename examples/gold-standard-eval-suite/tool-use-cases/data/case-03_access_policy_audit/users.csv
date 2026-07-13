@@ -1,0 +1,9 @@
+user_id,name,department,employment_status,worker_type
+u001,Ada,Finance,active,employee
+u002,Ben,Engineering,active,employee
+u003,Cara,Legal,active,employee
+u004,Dan,Finance,terminated,employee
+u005,Eve,Sales,active,employee
+u006,Finn,Engineering,active,contractor
+u007,Gia,HR,active,employee
+u008,Hugo,Finance,active,employee

@@ -1,0 +1,5 @@
+refund_id,order_id,refund_amount,status,processed_date
+R-5001,O-1003,230.00,processed,2026-06-04
+R-5002,O-1008,50.00,processed,2026-06-05
+R-5003,O-1004,45.00,failed,2026-06-04
+R-5004,O-1007,20.00,processed,2026-06-06

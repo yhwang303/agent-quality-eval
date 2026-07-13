@@ -33,6 +33,10 @@ export interface SessionOverview {
   has_response_report: boolean;
   has_transcript: boolean;
   response_score: number | null;
+  project_name?: string;
+  project_path?: string;
+  project_id?: string;
+  project_source?: 'workspace_roots' | 'transcript_path' | 'fallback' | string;
   // 父子 session 字段
   is_parent?: boolean;
   sub_sessions?: SubSessionInfo[];
@@ -52,6 +56,27 @@ export interface SessionOverview {
 }
 
 // v0.18.0：中央上行用户列表（GET /api/uplink/users）
+export interface EvalEvent {
+  id: number;
+  created_at: string;
+  event_type: 'trace' | 'reference' | 'ab' | 'regression' | 'gold' | string;
+  project_id?: string | null;
+  project_name?: string | null;
+  project_path?: string | null;
+  session_id?: string | null;
+  turn_index?: number | null;
+  baseline_session_id?: string | null;
+  baseline_turn_index?: number | null;
+  candidate_session_id?: string | null;
+  candidate_turn_index?: number | null;
+  has_gold: boolean;
+  gold_hash?: string | null;
+  verdict?: string | null;
+  winner?: string | null;
+  summary: Record<string, any>;
+  target: Record<string, any>;
+}
+
 export interface UplinkUserSummary {
   user_id: string;
   session_count: number;

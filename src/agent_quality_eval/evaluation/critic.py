@@ -15,7 +15,7 @@ from typing import Any
 
 from .models import utc_now
 
-CRITIC_REPORT_SCHEMA_VERSION = "agent-critic-v1"
+CRITIC_REPORT_SCHEMA_VERSION = "agent-critic-v2"
 DIMENSION_KEYS = (
     "task_completion",
     "tool_use",
@@ -282,8 +282,206 @@ def load_best_live_critic_state(session_id: str, turn_index: int | None = None) 
         return None
 
 
-def _dimension(verdict: str, review: str) -> dict[str, str]:
-    return {"verdict": str(verdict or "partial"), "review": str(review or "").strip()}
+def _dimension(
+    verdict: str,
+    review: str,
+    evidence: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "verdict": str(verdict or "partial"),
+        "review": str(review or "").strip(),
+        "evidence": _normalize_evidence_list(evidence),
+    }
+
+
+def _normalize_evidence_list(value: Any) -> list[dict[str, str]]:
+    """Coerce model-supplied evidence into a bounded list of {ref, quote} rows.
+
+    Accepts list of strings or list of {ref, quote, source} dicts. We keep this
+    intentionally permissive because LLMs return both shapes, but always emit
+    the same dict shape to the frontend so detail panels stay simple.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, dict):
+        candidates = [value]
+    elif isinstance(value, list):
+        candidates = list(value)
+    else:
+        return []
+    out: list[dict[str, str]] = []
+    for raw in candidates:
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                continue
+            out.append({"ref": "", "quote": text[:240], "source": ""})
+        elif isinstance(raw, dict):
+            ref = str(raw.get("ref") or raw.get("reference") or raw.get("location") or raw.get("step") or "").strip()
+            quote = str(raw.get("quote") or raw.get("text") or raw.get("excerpt") or raw.get("evidence") or "").strip()
+            source = str(raw.get("source") or raw.get("kind") or "").strip()
+            if not (ref or quote):
+                continue
+            out.append({"ref": ref[:80], "quote": quote[:240], "source": source[:40]})
+        if len(out) >= 6:
+            break
+    return out
+
+
+def _cap_evidence_keeping_required(items: list[Any], required_refs: set[str], max_total: int = 8) -> list[Any]:
+    """Trim an evidence list to `max_total` items without ever dropping the
+    deterministically-guaranteed entries in `required_refs` (a naive [:N]
+    slice can silently cut off a just-appended guaranteed item).
+    """
+    required = [i for i in items if isinstance(i, dict) and str(i.get("ref") or "") in required_refs]
+    others = [i for i in items if not (isinstance(i, dict) and str(i.get("ref") or "") in required_refs)]
+    budget = max(0, max_total - len(required))
+    return others[:budget] + required
+
+
+def _normalize_duration_evidence(dim: dict[str, Any], duration_ms: Any) -> dict[str, Any]:
+    """Guarantee the efficiency dimension always cites duration in minutes.
+
+    The model is asked to convert duration_ms to minutes in its evidence
+    quote, but can't be trusted to do so consistently (sometimes seconds,
+    sometimes raw milliseconds) — explicit user requirement: "用时时间单位
+    要统一啊，用min，别一会儿一个毫秒一会儿又是秒". Always replace whatever the
+    model wrote for metrics:duration_ms with a canonical minutes-based entry
+    computed from the real metric.
+    """
+    if not isinstance(dim, dict):
+        return dim
+    minutes = float(duration_ms or 0) / 60000
+    if minutes <= 0:
+        return dim
+    dim = dict(dim)
+    duration_ref_prefixes = ("metrics:duration_ms", "metrics:duration_min", "metrics:elapsed_minutes", "metrics:elapsed_seconds")
+    evidence = [
+        item for item in (dim.get("evidence") or [])
+        if not (isinstance(item, dict) and str(item.get("ref") or "").startswith(duration_ref_prefixes))
+    ]
+    evidence.append({"ref": "metrics:duration_ms", "quote": f"本轮耗时 {minutes:.1f} 分钟。", "source": "trace"})
+    dim["evidence"] = _cap_evidence_keeping_required(evidence, {"metrics:duration_ms"})
+    review = str(dim.get("review") or "")
+    review = re.sub(r"(\d[\d,\.]*)\s*(毫秒|ms)\b", lambda m: (_ms_to_minutes_text(m.group(1)) or m.group(0)), review)
+    review = re.sub(r"(\d[\d,\.]*)\s*秒(?!\d)", lambda m: (_seconds_to_minutes_text(m.group(1)) or m.group(0)), review)
+    dim["review"] = review
+    return dim
+
+
+def _normalize_efficiency_evidence(dim: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    """Explicit user requirement: "强制让llm输出token消耗，耗时，工具调用次数三个维度的
+    内容作为证据展示出来，不要只在自然语言中进行说明" — efficiency must always surface
+    tokens, duration and tool-call count as structured evidence chips, computed
+    deterministically so it never depends on the model remembering to cite them.
+    """
+    dim = _normalize_duration_evidence(dim, metrics.get("duration_ms"))
+    if not isinstance(dim, dict):
+        return dim
+    dim = dict(dim)
+    evidence = [item for item in (dim.get("evidence") or []) if isinstance(item, dict)]
+    existing_refs = {str(item.get("ref") or "") for item in evidence}
+    total_tokens = metrics.get("total_tokens")
+    if "metrics:total_tokens" not in existing_refs and total_tokens:
+        evidence.append({"ref": "metrics:total_tokens", "quote": f"共消耗 {int(total_tokens)} tokens。", "source": "trace"})
+    tool_count = metrics.get("tool_count")
+    if "metrics:tool_count" not in existing_refs and tool_count is not None:
+        # Deliberately worded to avoid the "工具调用...次数...次" phrasing used by
+        # reliability's failure-count evidence, which would otherwise trip the
+        # cross-dimension near-duplicate detector on similarity alone.
+        evidence.append({"ref": "metrics:tool_count", "quote": f"全程累计触发 {int(tool_count)} 次工具执行动作（成功与失败合计）。", "source": "trace"})
+    dim["evidence"] = _cap_evidence_keeping_required(
+        evidence, {"metrics:duration_ms", "metrics:total_tokens", "metrics:tool_count"}
+    )
+    return dim
+
+
+def _normalize_reliability_evidence(dim: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    """Explicit user requirement: reliability must consider three aspects —
+    失败恢复能力 (failure recovery), 边界情况处理 (edge case handling), 状态是否
+    一致 (state consistency) — not just raw tool-call failure counts. This is
+    enforced via both the prompt and here structurally: all three must always
+    appear as evidence, backfilling any the model omits so content is never
+    incomplete.
+    """
+    if not isinstance(dim, dict):
+        return dim
+    dim = dict(dim)
+    required = ("reliability:failure_recovery", "reliability:edge_case_handling", "reliability:state_consistency")
+    evidence = [item for item in (dim.get("evidence") or []) if isinstance(item, dict)]
+    existing_refs = {str(item.get("ref") or "") for item in evidence}
+    if "reliability:failure_recovery" not in existing_refs:
+        unrecovered = metrics.get("unrecovered_failures")
+        recovered_steps = metrics.get("error_recovery_steps")
+        if unrecovered is not None or recovered_steps is not None:
+            quote = f"未恢复失败数为 {int(unrecovered or 0)}，恢复动作 {int(recovered_steps or 0)} 次。"
+        else:
+            quote = "未提供失败恢复相关的独立指标，按中性处理。"
+        evidence.append({"ref": "reliability:failure_recovery", "quote": quote, "source": "trace"})
+    if "reliability:edge_case_handling" not in existing_refs:
+        evidence.append({"ref": "reliability:edge_case_handling", "quote": "未针对边界情况处理给出独立证据，按中性处理。", "source": "trace"})
+    if "reliability:state_consistency" not in existing_refs:
+        evidence.append({"ref": "reliability:state_consistency", "quote": "未针对状态一致性给出独立证据，按中性处理。", "source": "trace"})
+    dim["evidence"] = _cap_evidence_keeping_required(evidence, set(required))
+    return dim
+
+
+def _ms_to_minutes_text(raw: str) -> str | None:
+    try:
+        return f"{float(raw.replace(',', '')) / 60000:.1f} 分钟"
+    except ValueError:
+        return None
+
+
+def _seconds_to_minutes_text(raw: str) -> str | None:
+    try:
+        return f"{float(raw.replace(',', '')) / 60:.1f} 分钟"
+    except ValueError:
+        return None
+
+
+def _normalize_claims(value: Any) -> list[dict[str, Any]]:
+    """Bound claims to a small list of typed, evidence-backed records.
+
+    Frontend expects: {claim, type, verified, evidence}. type is constrained to
+    factual/process/quality/unknown so the detail panel can color-code at a
+    glance; unknown values are kept rather than dropped.
+    """
+    if not isinstance(value, list):
+        return []
+    allowed_types = {"factual", "process", "quality"}
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("claim") or item.get("text") or "").strip()
+        if not text:
+            continue
+        ctype = str(item.get("type") or item.get("category") or "").strip().lower()
+        if ctype not in allowed_types:
+            ctype = "unknown"
+        verified_raw = item.get("verified")
+        if isinstance(verified_raw, str):
+            verified: bool | None = verified_raw.strip().lower() in {"true", "yes", "passed", "1"}
+            if verified_raw.strip().lower() in {"unknown", "uncertain", "n/a", ""}:
+                verified = None
+        elif isinstance(verified_raw, bool):
+            verified = verified_raw
+        else:
+            verified = None
+        out.append(
+            {
+                "claim": text[:240],
+                "type": ctype,
+                "verified": verified,
+                "evidence": _normalize_evidence_list(item.get("evidence")),
+            }
+        )
+        if len(out) >= 12:
+            break
+    return out
 
 
 def _deterministic_structured(
@@ -293,12 +491,12 @@ def _deterministic_structured(
     overall_verdict: str = "partial",
 ) -> dict[str, Any]:
     total = int(metrics.get("total_tokens") or 0)
-    elapsed = round(float(metrics.get("duration_ms") or 0.0) / 1000.0, 2)
+    elapsed = round(float(metrics.get("duration_ms") or 0.0) / 60000.0, 2)
     calls = int(metrics.get("tool_count") or 0)
     failed = int(metrics.get("tool_error_count") or 0)
     summary = (
         f"结论：Agent Critic 未完成模型评审，当前仅保留确定性断言兜底。"
-        f"本轮记录到 {total} tokens、{elapsed}s、{calls} 次工具调用、失败 {failed} 次；"
+        f"本轮记录到 {total} tokens、{elapsed} 分钟、{calls} 次工具调用、失败 {failed} 次；"
         f"需要结合最终回复与工具结果继续复核交付质量。原因：{reason}"
     )
     structured = {
@@ -313,8 +511,9 @@ def _deterministic_structured(
         "reasoning": _dimension("on_track", "未调用 critic 模型时不对推理轨迹做强语义判断，仅提示回看步骤顺序与恢复动作。"),
         "instruction_following": _dimension("partial", "未调用 critic 模型时不推断隐含指令，只保留硬性断言的客观结果。"),
         "faithfulness": _dimension("partial", "最终回复关键声称仍需对照 tool_result 与原始 transcript 复核。"),
-        "efficiency": _dimension("normal", f"运行统计为 {total} tokens、{elapsed}s、{calls} 次工具调用。"),
+        "efficiency": _dimension("normal", f"运行统计为 {total} tokens、{elapsed} 分钟、{calls} 次工具调用。"),
         "reliability": _dimension("clear" if failed == 0 else "minor_issues", f"工具失败数为 {failed}，由确定性断言继续标记是否阻断。"),
+        "claims": [],
     }
     structured["review_markdown"] = _render_review_markdown(structured)
     return structured
@@ -355,7 +554,14 @@ def _normalize_structured(data: dict[str, Any], metrics: dict[str, Any]) -> dict
     for key in DIMENSION_KEYS:
         raw = data.get(key) if isinstance(data.get(key), dict) else {}
         fb = fallback[key]
-        out[key] = _dimension(raw.get("verdict") or fb["verdict"], raw.get("review") or fb["review"])
+        out[key] = _dimension(
+            raw.get("verdict") or fb["verdict"],
+            raw.get("review") or fb["review"],
+            raw.get("evidence"),
+        )
+    out["efficiency"] = _normalize_efficiency_evidence(out["efficiency"], metrics)
+    out["reliability"] = _normalize_reliability_evidence(out["reliability"], metrics)
+    out["claims"] = _normalize_claims(data.get("claims"))
     # Always rebuild the frontend markdown from normalized fields. The model may
     # still return legacy heuristic sections despite the prompt; the product
     # surface should remain locked to the standard eval dimensions.
@@ -395,19 +601,80 @@ def _render_review_markdown(data: dict[str, Any]) -> str:
 
 
 def _build_prompt(judge_input: dict[str, Any]) -> str:
+    dimension_schema_with_evidence = lambda verdict_enum, review_hint: {
+        "verdict": verdict_enum,
+        "review": review_hint,
+        "evidence": [
+            {
+                "ref": "step:N | tool_call:N | transcript:line | otel:span",
+                "quote": "trace 中的原文片段，最多 240 字。",
+                "source": "transcript | tool_result | trace | otel",
+            }
+        ],
+    }
     schema = {
         "summary_conclusion": "必须以“结论：”开头的一段自然语言。覆盖整体判断、用户诉求、agent关键动作、交付价值、主要风险。",
         "overall_verdict": "resolved | partial | unresolved",
         USER_REQUEST_COVERAGE_KEY: "80-160字自然语言段落。只判断用户诉求是否被覆盖：用户明确要求了什么、主 agent 实际交付了什么、哪些诉求已覆盖、哪些仍缺证据或未完成。",
-        "task_completion": {"verdict": "resolved | partial | unresolved", "review": "80-160字完整自然语言段落。围绕任务完成度判断最终交付是否满足可验收标准，不写启发式优缺点清单。"},
-        "tool_use": {"verdict": "correct | suboptimal | wrong", "review": "80-160字完整自然语言段落。评估工具选择、工具顺序、失败恢复和 tool_result 使用情况；可引用 tool_call#N，但不要罗列流水账。"},
-        "reasoning": {"verdict": "on_track | drift | redundant | lost", "review": "80-160字完整自然语言段落。评估推理路径是否围绕目标推进、是否有偏航、重复检索、过早下结论或缺少验证。"},
-        "instruction_following": {"verdict": "yes | partial | no", "review": "80-160字完整自然语言段落。评估显式指令、边界条件、禁止项、输出格式要求是否被遵循。"},
-        "faithfulness": {"verdict": "grounded | partial | hallucinated", "review": "80-160字完整自然语言段落。评估最终说法是否被 trace、工具结果、文件内容或用户输入支持；证据不足时标 partial。"},
-        "efficiency": {"verdict": "normal | high | excessive", "review": "80-160字完整自然语言段落。使用真实 token、耗时、工具数、失败数，结合任务复杂度判断是否高效。"},
-        "reliability": {"verdict": "clear | minor_issues | blocking_failure", "review": "80-160字完整自然语言段落。评估稳定性、错误恢复、未完成状态、运行异常和结果可复现风险。"},
+        "task_completion": dimension_schema_with_evidence(
+            "resolved | partial | unresolved",
+            "80-160字完整自然语言段落。围绕任务完成度判断最终交付是否满足可验收标准，只看最终产出（文件/成功响应/成功状态），不因过程中的工具失败率或重试次数而下调判定。",
+        ),
+        "tool_use": dimension_schema_with_evidence(
+            "correct | suboptimal | wrong",
+            "80-160字完整自然语言段落。只评估**工具选型正确性**：是否选对了工具、参数是否恰当、组合是否合理、有没有漏用应用的工具或错用非最优工具。**不写**失败次数与失败恢复（那属于 reliability），也不写 token/耗时（那属于 efficiency）。",
+        ),
+        "reasoning": dimension_schema_with_evidence(
+            "on_track | drift | redundant | lost",
+            "80-160字完整自然语言段落。评估推理路径是否围绕目标推进、是否有偏航、重复检索、过早下结论或缺少验证。",
+        ),
+        "instruction_following": dimension_schema_with_evidence(
+            "yes | partial | no",
+            "80-160字完整自然语言段落。评估显式指令、边界条件、禁止项、以及用户指定的实现手段/工具/MCP/skill（哪怕没指名具体是哪个）是否被遵循和真正使用。",
+        ),
+        "faithfulness": dimension_schema_with_evidence(
+            "grounded | partial | hallucinated",
+            "80-160字完整自然语言段落。评估 agent 在过程或结论中说的具体声称（数字/状态词/操作声称）是否被 trace、工具结果、文件内容支持；**不评估交付物本身是否存在**，那是 task_completion 的职责。证据不足时标 partial。",
+        ),
+        "efficiency": dimension_schema_with_evidence(
+            "normal | high | excessive",
+            "80-160字完整自然语言段落。**只看资源消耗**：token、耗时（必须明确写出本轮总耗时，直接使用 runtime_metrics.elapsed_minutes 字段的分钟数，不允许自己用 duration_ms/elapsed_seconds 换算，也不允许用秒或毫秒）、步骤数、思考步骤、同一工具重复调用次数、无效轮次。**不看**失败率、错误恢复。多次重试导致的资源浪费应在此判 excessive，不在 reliability 判定里重复。",
+        ),
+        "reliability": dimension_schema_with_evidence(
+            "clear | minor_issues | blocking_failure",
+            "80-160字完整自然语言段落，**必须依次覆盖三个方面，缺一不可**：①失败恢复能力——未被恢复的失败、崩溃、超时、safety 断言退化；②边界情况处理——是否有意识地处理了输入缺失/异常参数/极端场景等边界条件，而不是只走 happy path；③状态是否一致——多次操作/重试之间状态有没有出现自相矛盾、重复副作用或数据不一致。工具失败但完成恢复应判 minor_issues；仅当有具体失败直接阻断最终交付、或出现状态不一致/边界条件处理缺失导致的实质风险才判 blocking_failure。**不写**成功工具的选型（那属于 tool_use）与资源消耗（那属于 efficiency）。",
+        ),
+        "claims": [
+            {
+                "claim": "Agent 在最终回复中或 trace 中作出的具体声称，例如“写入了 foo.py”、“运行了 pytest 全绿”、“查询返回了 N 条”。",
+                "type": "factual | process | quality",
+                "verified": "true | false | unknown。true 需独立执行证据（tool_result 内容/文件状态/success=true）支持；false 需 evidence 能读出反驳；不确定一律 unknown。禁止拿 assistant 自述当 true 的证据。",
+                "evidence": [{"ref": "step:N | tool_call:N", "quote": "支持或反驳该 claim 的原文片段。", "source": "transcript | tool_result"}],
+            }
+        ],
         "review_markdown": "面向前端详情区的 Markdown。只能包含以下 8 个部分，顺序固定：**用户诉求覆盖情况**、**任务完成**、**工具使用**、**推理路径**、**指令遵循**、**忠实度**、**效率**、**可靠性**。每个部分下面写一段完整自然语言评审。不要写“做得好的部分”“主要不足与风险”“工具使用评审”“最终判定/最终判断”等额外章节。",
     }
+    reference = judge_input.get("reference_answer") if isinstance(judge_input.get("reference_answer"), dict) else None
+    reference_instructions = ""
+    if reference:
+        reference_instructions = (
+            "\n【Gold Standard 评审约束】\n"
+            "本轮用户已上传标准答案。你必须把 standard_answer 作为验收金标准来评估，不要把它当作普通参考资料。\n"
+            "保持输出 JSON schema、维度名称和 verdict 枚举完全不变，但每个维度的判断都必须说明主 agent 最终回复与标准答案的符合程度。\n"
+            "- task_completion：以是否覆盖标准答案的核心结论和必要步骤作为 resolved/partial/unresolved 的首要依据。\n"
+            "- 用户诉求覆盖情况：判断最终回复是否围绕标准答案要求的输出，而不是泛泛回应用户问题。\n"
+            "- instruction_following：结合用户原始要求和标准答案中的格式/边界/必要条件判断。\n"
+            "- faithfulness：最终回复若偏离、遗漏或新增与标准答案冲突的内容，应标为 partial 或 hallucinated，并指出差异。\n"
+            "- tool_use / reasoning：评估工具和推理是否支持得到标准答案，不要仅因过程很长就判好。\n"
+            "- efficiency：在答案未更接近标准答案时，额外 token、耗时和工具调用应视为负面。\n"
+            "不要改写标准答案，不要替标准答案补充新逻辑；只能基于 standard_answer、rubric、keywords、assertions 与 trace 证据评审。\n"
+        )
+    if reference and isinstance(reference.get("process_requirements"), dict) and reference.get("process_requirements"):
+        reference_instructions += (
+            "\nGold process_requirements are present. Evaluate these generic process constraints against trace/tool/reasoning evidence. "
+            "Do not hard-code any tool family; judge only the normalized requirements supplied by the user. "
+            "If process_requirements are absent, keep the existing trace heuristic.\n"
+        )
     return (
         "你是只读 Agent Critic sidecar，职责是评审主 agent 刚完成的一轮交互。"
         "只能根据给定 trace/transcript/tool_result 判断，不要假设外部事实，不要要求重新提供数据。"
@@ -415,7 +682,61 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         "评分口径：单个工具失败被恢复时不要上升为整体失败；只有影响用户最终验收时才判 unresolved/wrong。"
         "评审内容对齐主流 agent eval 维度：任务完成、工具使用、推理路径、指令遵循、忠实度、效率、可靠性。"
         "不要输出启发式复盘口吻，不要写泛化的优点/缺点列表；每个维度必须是一段可读的自然语言判断，且不得超过160字。"
-        "review_markdown 不要追加“最终判定/最终判断”章节。\n\n"
+        "review_markdown 不要追加“最终判定/最终判断”章节。\n"
+        "【证据先行硬约束】每个维度都必须给出 evidence 数组，且 evidence 必须来自 transcript / tool_result / trace / otel 的具体引用，"
+        "可以是 step:N、tool_call:N、transcript 行号或 otel span 名；找不到证据就把该维度的 verdict 朝保守一侧打分。\n"
+        "【三维度语义边界——不允许重叠】tool_use、efficiency、reliability 长期被误当成“同一件事”，本次严格切分：\n"
+        "  * tool_use 只回答“**选对了工具吗、参数对吗、组合合理吗**”——是选型正确性问题，与失败次数无关。\n"
+        "  * efficiency 只回答“**用了多少资源**”——只看 tokens、耗时、步骤、重复调用；不看失败率、不看恢复情况。\n"
+        "  * reliability 回答“**过程是否稳健**”，覆盖三个子方面（缺一不可）：失败恢复能力、边界情况处理、状态一致性，不看正常成功的工具选型，也不是单纯数一数工具调用失败次数。\n"
+        "过程颠簸但最终恢复 → tool_use 与 reliability 应给中性，efficiency 判 excessive。\n"
+        "过程颠簸且最终阻断交付 → reliability 独占 blocking_failure。\n"
+        "工具选错或参数错 → tool_use 独占 wrong，与失败次数无关。\n"
+        "【每维度证据数量】每个维度的 evidence 数组必须包含**至少 2 条**引用（找不到 2 条时至少 1 条），最多 4 条。\n"
+        "【三步语义抽取——先做这个，再举证】task_completion / instruction_following / faithfulness 长期被误当成同一件事，本次强制先做抽取动作再找证据：\n"
+        "  ① 从 user_query 抽出【主诉求】：用户到底要什么。示例：主诉求=生成新版 exe。**只有 task_completion 引用主诉求**。\n"
+        "  ② 从 user_query 抽出【约束/边界/禁止项清单】：主诉求之外用户附带的规则，覆盖两类，缺一不可：\n"
+        "     (a) 边界/禁止类：例如“不要破坏现有结构”“按 dist 现有格式”“只改 X 不动 Y”“中英文一致”“禁止硬编码”。\n"
+        "     (b) 手段/工具/harness 指定类：用户明确点名了“要用什么方式/工具/MCP/skill 去做”，哪怕没有指名具体是哪一个（例如“你用 MCP 看一下”“调用某个 skill 处理”“用工具去查”“借助 XX 能力完成”）。"
+        "只要用户点名了实现手段本身，这就是独立于主诉求的一条约束——即使目标和手段写在同一句话里也必须拆开：目标进主诉求，手段进约束清单，**不允许把“用 MCP 看一下项目进度”整体揉进主诉求就当没有约束**。\n"
+        "**只有 instruction_following 引用这个清单**，逐条对照 agent 是否遵守：对手段类约束，要看 trace 里是否真的调用了对应类型的工具/MCP/skill（例如是否有 tool_call 命中 MCP 工具），而不是绕开约束直接凭自身知识/其他方式达成目标。"
+        "若用户原话里除主诉求外**确实没有任何附加约束**（包括没有指定任何手段/工具/MCP/skill），instruction_following 才可以给 verdict=yes 并写 quote=\"用户未提附加约束\"；**只要用户指定了任何手段，哪怕很笼统，都不允许再套用这句话**，必须逐条核实该手段是否被真正使用。**禁止把主诉求当作约束再讲一遍**。\n"
+        "  ③ 从 final_response 抽出【agent 具体声称清单】：faithfulness 回答的是“agent 说过的话是否属实”，不是“东西有没有交付”——判断对象是**话**，不是**物**。合格声称必须是可独立核验的过程性/数量性/状态性陈述，例如“265 项测试全部通过”“doctor 通过”“已升 v6→v7”“已修改 X 处”“共调用了 N 次工具”。"
+        "**反例（不算声称，禁止当作 faithfulness 证据）**：单纯陈述“生成/交付/完成了 XX 文件或结果”本身——这只是复述交付物，属于 task_completion 的判断对象，即便它出现在 final_response 里也不能被 faithfulness 拿来当 claim。自检方法：把这句话从 final_response 里去掉后，task_completion 的证据是否也随之消失——如果是，说明它就是交付物本身，两个维度不能共用。"
+        "**若逐句检查后除交付物陈述外确实没有其他可验证声称**，faithfulness 必须写 claim=\"agent 未在回复中提出独立于交付物的可验证声称\"，evidence 用 final_response:无独立声称，verdict 给 grounded（没有可证伪的声称就谈不上失实），**不允许为了凑证据数量硬把交付物包装成一个 claim**。"
+        "**只有 faithfulness 引用这些声称**，逐条用 tool_result / metrics 反查是否属实（例如是否有 pytest 调用、是否有对应文件写入等）。**禁止把交付物本身当作声称**——交付物是 task_completion 的事，不是 faithfulness 的事。\n"
+        "【每维度证据 ref 前缀白名单——违反即失败】ref 必须以下列前缀开头，且**不同维度不允许共用同一 ref**：\n"
+        "  - task_completion → 允许前缀：final_response、assertion:xxx、file:path、artifact:xxx。quote 描述【主诉求】达成情况：用户要 X，交付了 X 或未交付 X。**严禁 tool_call#N**（那是过程证据不是交付证据）。\n"
+        "  - tool_use → 允许前缀：tool_choice:tool_name、metrics:tool_kind_count、metrics:tool_count。quote 写选型判断，例如 quote=\"多次使用 Read 循环读文件，用 Grep 一次搜索更合适\"。**严禁 metrics:tool_error_count**。\n"
+        "  - reasoning → 允许前缀：step:strategy_shift、step:plan_update、step:thinking、metrics:strategy_shifts_count。quote 写路径特征（绕路/直达/重复），不放 transcript 原文。\n"
+        "  - instruction_following → 允许前缀：user_query:约束点。quote 必须逐条写【约束/边界/禁止项】的具体名字，边界类和手段/工具/MCP/skill 指定类都算，例如 quote=\"约束『不要破坏现有结构』：agent 未破坏\" 或 quote=\"约束『需用 MCP』：agent 是否调用了 MCP 工具\"。**严禁把主诉求（生成 exe）当约束再讲一遍**。只有用户确实没指定任何边界或手段时才明写 quote=\"用户未提附加约束\"，evidence 用 user_query:无附加约束。\n"
+        "  - faithfulness → 允许前缀 **必须成对**：claim:XX + tool_call#N。claim 必须是从 final_response 抽出的**具体可验证声称**（数字/状态词/操作声称，例如“265 项测试通过”“doctor 通过”“v6→v7”），而不是“生成了 exe”这种交付物本身。**严禁只用 final_response 或只用一般 tool_call**。**例外**：若 final_response 除交付物陈述外确实没有其他可验证声称，允许写 claim:agent未提出独立声称 + final_response:无独立声称 这一对，quote=\"agent 未在回复中提出独立于交付物的可验证声称\"。\n"
+        "  - efficiency → 允许前缀：metrics:total_tokens、metrics:input_tokens、metrics:output_tokens、metrics:duration_ms、metrics:tool_count、metrics:step_count、metrics:tool_kind_count、metrics:thinking_steps、metrics:repeated_tool_calls。**必须同时包含 ref=metrics:duration_ms、ref=metrics:total_tokens、ref=metrics:tool_count 这三条**（分别对应耗时/token消耗/工具调用次数，三者都要以证据条目的形式列出，不能只在 review 自然语言里提一句；duration_ms 的分钟数值必须直接取自 runtime_metrics.elapsed_minutes 字段，不要自己换算），可以再加其他前缀补充。**严禁 metrics:tool_error_count**。\n"
+        "  - reliability → 允许前缀：step:error_recovery、metrics:tool_error_count、metrics:unrecovered_failures、assertion:safety_xxx、event:crash、event:timeout、**reliability:failure_recovery、reliability:edge_case_handling、reliability:state_consistency**。**必须同时包含这三条固定 ref**：reliability:failure_recovery（quote 体现“是否恢复/是否影响交付”，例如“N 次失败全部恢复，未影响交付”）、reliability:edge_case_handling（quote 说明是否处理了边界/异常输入，没处理就明说“未观察到边界情况处理”）、reliability:state_consistency（quote 说明多次操作间状态是否一致，没有可判断的证据就明说“未观察到状态不一致的证据”）。**只报失败次数不说恢复情况/边界处理/状态一致性，视为证据不合格**。**严禁 tool_call#N**（那是原始工具事件不是恢复观察点）。\n"
+        "【数字方向硬约束】效率维度：数字大 = 消耗多 = verdict 朝 excessive；可靠性维度：**未恢复且影响交付**的失败数 > 0 = verdict 朝 minor_issues 或 blocking_failure；失败已全部恢复、未影响交付时，即使失败次数不少，也应判 clear 或 minor_issues，不得仅凭失败次数本身判 blocking_failure。绝不允许写“消耗更多但更高效”这种前后矛盾的话。\n"
+        "证据 ref 必须能映射到上面白名单前缀之一；不允许拿 assistant 自述做证据。\n"
+        "【拒绝表面合规】不要因为文件名/工具名/字段对就判 PASS：必须确认对应内容真实非空、与用户诉求一致；"
+        "巧合命中、空文件、声称做过但 trace 找不到对应 tool_result 的情况一律视为不达标。\n"
+        "【三维度严格解耦】task_completion 只回答“最终产物/交付是否达到用户可验收标准”。"
+        "工具调用失败次数、重试次数、错误恢复次数不进入 task_completion 判定。"
+        "只要 trace 中最终存在满足用户诉求的成功产出（例如目标文件已生成、目标 API 已调用成功、目标数据已返回），"
+        "即便过程中经历了多次工具失败与重试，task_completion 也应判 resolved；"
+        "只有能明确指出“某个具体失败没被恢复且直接阻断了最终交付”，才可以判 unresolved。"
+        "过程中的高失败率、多次重试、耗时长应归入 efficiency（判 excessive）与 reliability（判 minor_issues 直至 blocking_failure），"
+        "不允许在 task_completion 与用户诉求覆盖情况维度里写“工具失败率高，因此交付存在风险/影响验收”这类跨维度串味结论。"
+        "reliability 判 blocking_failure 仅限“最终交付被阻断”的情况；只是过程颠簸但最终产出成功，应判 minor_issues。\n"
+        "【claims 提取与 verified 判定】请额外输出 claims 数组：从最终回复或 trace 中抽取 agent 作出的可验证声称（factual/process/quality）。"
+        "verified 三态判定必须严格：\n"
+        "  - verified=true 必须要有独立的执行证据支持该声称（tool_result 中的 stdout/文件内容、显式 success=true、apiResult 明确成功、observed 文件系统状态等）；"
+        "不允许拿 assistant 自己在最终回复里的表述当验证证据（自证不算证）；也不允许仅凭“工具调用发生过”就判 true。\n"
+        "  - verified=false 必须能从 evidence 中读出反驳信号（明确 error / 空输出 / 输出与声称不一致 / success=false）；"
+        "仅仅“找不到直接执行证据”不足以判 false。\n"
+        "  - 找不到充分证据时一律判 unknown，并在 evidence 中说明缺哪类证据；不要为了给出“确定”结论就硬判 true 或 false。\n"
+        "  - 数据源类型影响判定：来自 IDE hook 的真实 trace 通常有 tool_result 内容可作为独立证据；"
+        "来自 OTel/telemetry 类的上传 trace（source_event 为 user-upload-eval）通常只有 metadata（success/error_type/duration），没有 stdout；"
+        "此时工具类声称的 verified 应偏向 unknown，除非 attributes 里有 success=true 明确对应该声称。\n"
+        "  - evidence 与 verified 必须语义一致：若 evidence 引用的是支持性文本，verified 不应为 false；若 evidence 引用的是反驳性文本，verified 不应为 true。\n"
+        f"{reference_instructions}\n"
         "【必须输出 JSON 对象，字段完全使用以下 schema】\n"
         f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
         "【本轮原始材料】\n"
@@ -431,6 +752,7 @@ def _build_report(
     turn_index: int,
     agent_type: str,
     source_event: str,
+    reference_answer: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from .session_eval import _build_judge_v3_input, _build_raw_eval_context, extract_turn_metrics
     from .settings import load_critic_settings
@@ -461,6 +783,8 @@ def _build_report(
         "model": settings.model,
         "input_sources": [],
     }
+    if reference_answer:
+        base["reference_answer"] = reference_answer
     try:
         live_state = load_best_live_critic_state(session_id, turn_index)
         if isinstance(live_state, dict):
@@ -505,6 +829,8 @@ def _build_report(
         overview={},
     )
     judge_input = _build_judge_v3_input(metrics, turn, raw_context)
+    if reference_answer:
+        judge_input["reference_answer"] = reference_answer
     base["input_sources"] = raw_context.get("sources", [])
     started = time.time()
     provider = load_provider(provider_config)
@@ -552,6 +878,7 @@ def run_critic_for_cot(
     agent_type: str = "unknown",
     source_event: str = "manual",
     persist_eval: bool = True,
+    reference_answer: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     sid = str(session_id or cot.get("session_id") or "").strip()
     if not sid:
@@ -561,7 +888,7 @@ def run_critic_for_cot(
         raise ValueError(f"turn not found: {turn_index}")
     idx = int(turn.get("turn_index") or 0)
     existing = load_critic_report(sid, idx)
-    if _should_reuse_existing_report(existing, source_event):
+    if not reference_answer and _should_reuse_existing_report(existing, source_event):
         log_critic_event(
             "run_turn_reuse_existing",
             session_id=sid,
@@ -578,6 +905,7 @@ def run_critic_for_cot(
         agent_type=agent_type or cot.get("agent_type") or "unknown",
         source_event=source_event,
         persist_eval=persist_eval,
+        has_reference_answer=bool(reference_answer),
     )
     running = {
         "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
@@ -593,6 +921,8 @@ def run_critic_for_cot(
         "overall_verdict": "partial",
         "reason": "Agent Critic is running; this placeholder must not be treated as a completed eval.",
     }
+    if reference_answer:
+        running["reference_answer"] = reference_answer
     write_critic_report(running)
     report = _build_report(
         cot=cot,
@@ -601,6 +931,7 @@ def run_critic_for_cot(
         turn_index=idx,
         agent_type=agent_type,
         source_event=source_event,
+        reference_answer=reference_answer,
     )
     write_critic_report(report)
     if persist_eval:

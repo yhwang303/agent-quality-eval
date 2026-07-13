@@ -7,6 +7,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
+from ._secret_store import decrypt_secret, encrypt_secret, is_encrypted
 from .store import default_home
 
 
@@ -91,11 +92,20 @@ def load_critic_settings() -> CriticSettings:
         timeout = int(critic.get("timeout") or 120)
     except (TypeError, ValueError):
         timeout = 120
+    # Prefer the encrypted field. Fall back to legacy plaintext ``api_key``
+    # for one migration cycle: after the first ``save_critic_settings``, that
+    # legacy key is stripped from disk. We deliberately do not migrate here
+    # to keep read paths side-effect free.
+    stored_key = str(critic.get("api_key_enc") or "")
+    if stored_key:
+        api_key = decrypt_secret(stored_key)
+    else:
+        api_key = str(critic.get("api_key") or "")
     return CriticSettings(
         enabled=bool(critic.get("enabled", True)),
         provider=provider,
         model=model,
-        api_key=str(critic.get("api_key") or ""),
+        api_key=api_key,
         timeout=max(15, min(timeout, 300)),
     )
 
@@ -121,10 +131,22 @@ def save_critic_settings(payload: dict[str, Any]) -> CriticSettings:
     )
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     raw = _read_settings_blob()
-    raw["critic"] = asdict(settings)
+
+    def _persisted_view(s: CriticSettings) -> dict[str, Any]:
+        # Stored form: never includes plain-text ``api_key``. Instead we hold
+        # ``api_key_enc`` (opaque, decryptable only by the current OS user).
+        # ``has_api_key`` is a hint for external readers of the file.
+        blob = asdict(s)
+        blob.pop("api_key", None)
+        blob["api_key_enc"] = encrypt_secret(s.api_key) if s.api_key else ""
+        blob["has_api_key"] = bool(s.api_key)
+        return blob
+
+    persisted = _persisted_view(settings)
+    raw["critic"] = persisted
     # Keep the legacy key in sync so older frontend bundles and configs keep
     # working, while the runtime treats it as Agent Critic settings.
-    raw["llm_judge"] = asdict(settings)
+    raw["llm_judge"] = persisted
     SETTINGS_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
     return settings
 

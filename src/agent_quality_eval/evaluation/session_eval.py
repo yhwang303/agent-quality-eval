@@ -1,4 +1,4 @@
-﻿"""Observed-session and turn-level evaluation metric extraction."""
+"""Observed-session and turn-level evaluation metric extraction."""
 
 from __future__ import annotations
 
@@ -12,6 +12,9 @@ from .models import utc_now
 
 
 ERROR_TERMS = ("error", "exception", "traceback", "failed", "failure", "错误", "异常", "失败")
+THINKING_STEP_TYPES = frozenset(
+    {"thinking_inter", "thinking_intermediate", "thinking_explicit", "pre_tool_reasoning", "tool_decision"}
+)
 PII_PATTERNS = (
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
@@ -228,6 +231,8 @@ def _build_turn_eval_report_v3(
         overview=overview,
     )
     judge = _run_optional_turn_judge(turn_eval_config, metrics, turn, raw_eval_context)
+    reference_answer = judge.get("reference_answer") if isinstance(judge.get("reference_answer"), dict) else None
+    assertion_results.extend(_run_gold_process_assertions(reference_answer, metrics, turn, cot))
 
     scored = [item for item in assertion_results if not item.get("skipped")]
     passed_count = sum(1 for item in scored if item.get("passed"))
@@ -557,6 +562,95 @@ def _run_v3_turn_assertions(
     cot: dict[str, Any],
 ) -> list[dict[str, Any]]:
     return [_run_v3_turn_assertion(assertion, metrics, turn, cot) for assertion in assertions]
+
+
+def _run_gold_process_assertions(
+    reference_answer: dict[str, Any] | None,
+    metrics: dict[str, Any],
+    turn: dict[str, Any],
+    cot: dict[str, Any],
+) -> list[dict[str, Any]]:
+    requirements = reference_answer.get("process_requirements") if isinstance(reference_answer, dict) else None
+    if not isinstance(requirements, dict):
+        return []
+    values = {
+        key: [str(item).strip() for item in requirements.get(key, []) if str(item).strip()]
+        for key in ("must_include", "must_not_include", "required_tools", "forbidden_tools", "steps")
+        if isinstance(requirements.get(key), list)
+    }
+    if not any(values.values()):
+        return []
+    trace_text, tool_text = _gold_process_text(metrics, turn, cot)
+    results: list[dict[str, Any]] = []
+
+    def add(kind: str, requirement: str, passed: bool, found: bool) -> None:
+        assertion = {
+            "name": f"gold-process-{kind}-{len(results) + 1}",
+            "label_zh": f"Gold process: {kind}",
+            "type": "gold-process",
+            "category": "gold_process",
+            "severity": "high" if kind in {"required_tool", "must_include", "step"} else "medium",
+            "source": "gold_reference",
+            "binary": True,
+        }
+        results.append(
+            _v3_result(
+                assertion,
+                passed,
+                1.0 if passed else 0.0,
+                f"Gold process requirement {'matched' if passed else 'not satisfied'}: {requirement}",
+                {"kind": kind, "requirement": requirement, "evidence": "found" if found else "not_found"},
+            )
+        )
+
+    for key, kind, haystack, should_exist in (
+        ("must_include", "must_include", trace_text, True),
+        ("steps", "step", trace_text, True),
+        ("required_tools", "required_tool", tool_text + "\n" + trace_text, True),
+        ("must_not_include", "must_not_include", trace_text, False),
+        ("forbidden_tools", "forbidden_tool", tool_text + "\n" + trace_text, False),
+    ):
+        for requirement in values.get(key, []):
+            found = _gold_requirement_found(requirement, haystack)
+            add(kind, requirement, found if should_exist else not found, found)
+    return results
+
+
+def _gold_process_text(metrics: dict[str, Any], turn: dict[str, Any], cot: dict[str, Any]) -> tuple[str, str]:
+    parts = [
+        metrics.get("user_query"),
+        metrics.get("final_response"),
+        metrics.get("assistant_response"),
+        turn.get("user_query"),
+        turn.get("final_response"),
+        turn.get("assistant_response"),
+        turn.get("response"),
+        _flatten_text(turn),
+    ]
+    tools: list[str] = []
+    for step in turn.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
+        tool = metadata.get("tool_name") or metadata.get("name") or step.get("tool_name")
+        if tool:
+            tools.append(str(tool))
+    metric_tool_counts = metrics.get("tool_name_counts")
+    metric_tool_items = metric_tool_counts.items() if isinstance(metric_tool_counts, dict) else []
+    for name, count in metric_tool_items:
+        if count:
+            tools.append(str(name))
+    return "\n".join(str(part or "") for part in parts).lower(), "\n".join(tools).lower()
+
+
+def _gold_requirement_found(requirement: str, haystack: str) -> bool:
+    expected = str(requirement or "").strip().lower()
+    if not expected:
+        return True
+    if expected in haystack:
+        return True
+    tokens = [token for token in re.findall(r"[\w]+|[\u4e00-\u9fff]", expected, flags=re.UNICODE) if len(token) > 1]
+    return bool(tokens) and all(token.lower() in haystack for token in tokens)
 
 
 def _run_v3_turn_assertion(
@@ -903,6 +997,7 @@ def _run_optional_turn_judge(
                 "input_sources": critic_report.get("input_sources") or raw_eval_context.get("sources", []),
                 "eval_method": critic_report.get("eval_method") or "agent_critic_v1",
                 "source_event": critic_report.get("source_event"),
+                "reference_answer": critic_report.get("reference_answer"),
                 "live_supervisor": live_supervisor,
                 "report_path": str(critic_report_path(session_id, turn_index)),
                 "created_at": critic_report.get("created_at"),
@@ -940,6 +1035,7 @@ def _run_optional_turn_judge(
             "input_sources": critic_report.get("input_sources") or raw_eval_context.get("sources", []),
             "eval_method": critic_report.get("eval_method") or "agent_critic_v1",
             "source_event": critic_report.get("source_event"),
+            "reference_answer": critic_report.get("reference_answer"),
             "live_supervisor": live_supervisor,
             "report_path": str(critic_report_path(session_id, turn_index)),
             "created_at": critic_report.get("created_at"),
@@ -1059,13 +1155,27 @@ def _build_judge_v3_input(metrics: dict[str, Any], turn: dict[str, Any], raw_eva
     tool_results: list[dict[str, Any]] = []
     tool_call_index = 1
     elapsed_seconds = round((float(metrics.get("duration_ms") or 0.0) / 1000.0), 2)
+    elapsed_minutes = round((float(metrics.get("duration_ms") or 0.0) / 60000.0), 1)
     runtime_metrics = {
         "total_tokens": max(0, _to_int(metrics.get("total_tokens"))),
+        "duration_ms": max(0, _to_int(metrics.get("duration_ms"))),
         "elapsed_seconds": elapsed_seconds,
+        # Pre-computed so the model doesn't do its own ms/seconds->minutes
+        # division in prose (it was getting this arithmetic wrong). Always
+        # cite this field, never elapsed_seconds or duration_ms directly.
+        "elapsed_minutes": elapsed_minutes,
         "tool_calls_total": max(0, _to_int(metrics.get("tool_count"))),
         "tool_calls_failed": max(0, _to_int(metrics.get("tool_error_count"))),
         "tool_category_counts": metrics.get("tool_category_counts") or {},
         "tool_name_counts": metrics.get("tool_name_counts") or {},
+        # Distinct signals for reasoning/reliability/efficiency dimensions so
+        # they don't all fall back to citing tool_calls_failed.
+        "step_count": max(0, _to_int(metrics.get("step_count"))),
+        "thinking_steps": max(0, _to_int(metrics.get("thinking_steps"))),
+        "strategy_shifts": max(0, _to_int(metrics.get("strategy_shifts"))),
+        "repeated_tool_calls": max(0, _to_int(metrics.get("repeated_tool_calls"))),
+        "error_recovery_steps": max(0, _to_int(metrics.get("error_recovery_steps"))),
+        "unrecovered_failures": max(0, _to_int(metrics.get("unrecovered_failures"))),
     }
 
     for idx, step in enumerate(turn.get("steps") or [], start=1):
@@ -1094,7 +1204,7 @@ def _build_judge_v3_input(metrics: dict[str, Any], turn: dict[str, Any], raw_eva
             {
                 "ref": f"turn#{idx}",
                 "kind": step_type or "assistant",
-                "thinking": content if step_type in {"thinking_inter", "thinking_intermediate", "thinking_explicit", "pre_tool_reasoning", "tool_decision"} else "",
+                "thinking": content if step_type in THINKING_STEP_TYPES else "",
                 "duration_ms": step.get("duration_ms") or metadata.get("duration_ms"),
                 "tool_calls": [
                     {
@@ -1103,7 +1213,7 @@ def _build_judge_v3_input(metrics: dict[str, Any], turn: dict[str, Any], raw_eva
                         "arguments": _limit_text(tool_input, 420),
                     }
                 ] if tool_input is not None or tool_name else [],
-                "content": "" if step_type in {"thinking_inter", "thinking_intermediate", "thinking_explicit", "pre_tool_reasoning", "tool_decision"} else content,
+                "content": "" if step_type in THINKING_STEP_TYPES else content,
             }
         )
 
@@ -1956,6 +2066,7 @@ def _group_assertion_results(results: list[dict[str, Any]]) -> list[dict[str, An
         "planning": "计划执行",
         "computer_use": "GUI/浏览器操作",
         "tool_use": "工具使用",
+        "gold_process": "Gold 过程要求",
         "optional_judge": "LLM 评审",
         "outcome": "任务结果",
     }
@@ -2668,6 +2779,10 @@ def _build_error_observability(steps: list[Any], final_response: str, turn: dict
         "tool_error_count": sum(tool_error_by_tool.values()),
         "tool_error_by_tool": dict(sorted(tool_error_by_tool.items(), key=lambda kv: (-kv[1], kv[0]))),
         "error_samples": samples,
+        # Unconditional (unlike error_breakdown, which drops zero-valued keys) so
+        # downstream consumers (compare/regression prompts) always have a stable
+        # field to distinguish "reliability" evidence from raw error counts.
+        "error_recovery_steps": len(recovery_steps),
     }
 
 
@@ -2720,6 +2835,10 @@ def extract_turn_metrics(payload: dict[str, Any]) -> dict[str, Any]:
         **tool_taxonomy,
         "step_count": len(steps),
         "step_type_counts": step_type_counts,
+        "thinking_steps": sum(
+            count for step_type, count in step_type_counts.items()
+            if step_type in THINKING_STEP_TYPES
+        ),
         "strategy_shifts": _to_int(turn.get("strategy_shifts")),
         "plan_update_count": plan_updates,
         "error_count": error_observability["error_count"],
@@ -2729,6 +2848,15 @@ def extract_turn_metrics(payload: dict[str, Any]) -> dict[str, Any]:
         "error_term_counts": error_observability["error_term_counts"],
         "tool_error_by_tool": error_observability["tool_error_by_tool"],
         "error_samples": error_observability["error_samples"],
+        # Derived, single-source-of-truth signals so compare/regression prompts
+        # can cite something more specific than the raw tool_error_count for
+        # "recovery"/"repetition" style dimensions (reliability, workflow
+        # integrity, efficiency) instead of all converging on one metric.
+        "error_recovery_steps": error_observability["error_recovery_steps"],
+        "unrecovered_failures": max(
+            0, error_observability["tool_error_count"] - error_observability["error_recovery_steps"]
+        ),
+        "repeated_tool_calls": max(0, len(tool_calls) - len(set(tool_calls))),
         "pii_or_secret_risk": bool(pii_hits),
         "pii_or_secret_hits": pii_hits,
         "trace_fields_present": {

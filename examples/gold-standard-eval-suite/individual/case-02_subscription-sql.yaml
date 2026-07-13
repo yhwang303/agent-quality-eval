@@ -1,0 +1,59 @@
+name: gold-subscription-sql
+version: v1
+cases:
+  - id: subscription-cohort-sql
+    title: Subscription Cohort SQL
+    question: |
+      Write a PostgreSQL query for 30-day paid activation rate and average first-month revenue by signup month and country.
+    expected_answer: |
+      The answer should use user-level aggregation before cohort aggregation.
+
+      Acceptable query:
+
+      ```sql
+      WITH first_30_day_subscriptions AS (
+        SELECT
+          u.user_id,
+          date_trunc('month', u.signup_date)::date AS cohort_month,
+          u.country,
+          s.subscription_id,
+          s.started_at,
+          s.monthly_price_usd
+        FROM users u
+        LEFT JOIN subscriptions s
+          ON s.user_id = u.user_id
+         AND s.started_at >= u.signup_date
+         AND s.started_at < u.signup_date + INTERVAL '30 days'
+      ),
+      user_level AS (
+        SELECT
+          user_id,
+          cohort_month,
+          country,
+          MIN(started_at) AS first_paid_started_at,
+          COALESCE(SUM(monthly_price_usd) FILTER (WHERE subscription_id IS NOT NULL), 0) AS first_month_revenue
+        FROM first_30_day_subscriptions
+        GROUP BY user_id, cohort_month, country
+      )
+      SELECT
+        cohort_month,
+        country,
+        COUNT(*) AS users_signed_up,
+        COUNT(*) FILTER (WHERE first_paid_started_at IS NOT NULL) AS activated_users,
+        ROUND(COUNT(*) FILTER (WHERE first_paid_started_at IS NOT NULL)::numeric / NULLIF(COUNT(*), 0), 4) AS activation_rate,
+        ROUND(AVG(first_month_revenue) FILTER (WHERE first_paid_started_at IS NOT NULL), 2) AS avg_first_month_revenue
+      FROM user_level
+      GROUP BY cohort_month, country
+      ORDER BY cohort_month, country;
+      ```
+
+      It should explain that multiple subscriptions do not double-count activated users, users with no subscription remain in the denominator due to the LEFT JOIN, and NULLIF avoids division by zero.
+    rubric: Must count activated users once, preserve denominator, handle multiple subscriptions, and avoid division by zero.
+    keywords: ["date_trunc", "LEFT JOIN", "NULLIF", "FILTER", "user_level", "30 days"]
+    assertions:
+      - type: keywords
+        value: ["date_trunc", "LEFT JOIN", "NULLIF", "FILTER", "30 days"]
+        all_required: true
+      - type: contains
+        value: "GROUP BY"
+

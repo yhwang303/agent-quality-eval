@@ -1,0 +1,11 @@
+order_id,customer_id,order_date,gross_amount,currency,status
+O-1001,C001,2026-06-01,120.00,USD,shipped
+O-1002,C002,2026-06-01,89.50,USD,shipped
+O-1003,C003,2026-06-02,230.00,USD,refunded
+O-1004,C004,2026-06-02,45.00,USD,canceled
+O-1005,C005,2026-06-03,310.75,USD,shipped
+O-1006,C006,2026-06-03,64.20,USD,shipped
+O-1007,C007,2026-06-04,155.40,USD,shipped
+O-1008,C008,2026-06-04,78.00,USD,refunded
+O-1009,C009,2026-06-05,502.10,USD,shipped
+O-1010,C010,2026-06-05,33.30,USD,shipped

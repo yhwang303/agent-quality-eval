@@ -1,0 +1,55 @@
+name: gold-tool-access-policy-audit
+version: v1
+cases:
+  - id: access-policy-audit
+    title: Access Policy Audit
+    question: |
+      Audit access grants by joining users, resources, access logs, and applying policy.md.
+    expected_answer: |
+      The answer must join users.csv, resources.csv, access_log.csv, and policy.md.
+
+      Violations table:
+
+      - u004 Dan, Finance, terminated employee, has read on Payroll Export r_payroll. Violates rule 1: terminated users must have zero access. Severity critical. Action: revoke immediately and review post-termination access process.
+      - u006 Finn, Engineering contractor, has write on Production Source Repo r_source. Violates rule 3 because contractors are not allowed on r_source where allow_contractors=false. Severity high. Action: revoke source access or convert to approved employee access; CHG-20 does not override contractor prohibition.
+      - u005 Eve, Sales employee, has read on Vendor Contracts r_contracts. Violates rule 2 because allowed_departments are Legal and Finance, not Sales. Severity high because the resource is confidential. Action: revoke and route through Legal/Finance approval if needed.
+      - u002 Ben, Engineering employee, has admin on CI Secrets Vault r_pipeline with ticket ENG-77. Violates restricted admin rule because admin on restricted resources requires a SEC- ticket. Severity critical. Action: remove admin until Security approves with SEC-prefixed ticket.
+      - u006 Finn, Engineering contractor, has read on CRM Contacts r_crm. Although r_crm allows contractors, rule 3 also requires the user's department to be allowed; allowed_departments are Sales and Finance, not Engineering. Severity medium because r_crm is internal. Action: revoke or move through Sales/Finance-approved access path.
+
+      Compliant grants:
+
+      - u001 Ada read on Payroll Export is compliant: active Finance employee, Finance is allowed, read on restricted resource does not require DPO ticket.
+      - u002 Ben write on Production Source Repo is compliant: active Engineering employee, Engineering is allowed, confidential write has CHG-19.
+      - u003 Cara write on Vendor Contracts is compliant: active Legal employee, Legal is allowed, confidential write has CHG-44.
+      - u008 Hugo export on CRM Contacts is compliant: active Finance employee, Finance is allowed, internal export is allowed.
+      - u007 Gia export on Payroll Export is compliant: active HR employee, HR is allowed, restricted export has DPO-91.
+
+      Counts by severity:
+      - Critical: 2.
+      - High: 2.
+      - Medium: 1.
+      - Low: 0.
+
+      Top three remediation priorities:
+      1. Revoke u004's access because terminated-user access is critical.
+      2. Remove u002's admin access to CI Secrets Vault until a valid SEC- approval exists.
+      3. Revoke u006's contractor access to Production Source Repo and CRM Contacts, then review contractor access controls.
+    rubric: |
+      Must apply every policy rule exactly, identify five violations, list five compliant grants, provide severity counts, and prioritize remediation.
+    keywords:
+      - u004
+      - u006
+      - u005
+      - u002
+      - CI Secrets Vault
+      - SEC-
+      - Critical: 2
+      - High: 2
+      - Medium: 1
+    assertions:
+      - type: keywords
+        value: ["u004", "u006", "u005", "u002", "CI Secrets Vault", "SEC-", "Critical", "High", "Medium"]
+        all_required: true
+      - type: not-contains
+        value: "all grants are compliant"
+

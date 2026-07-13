@@ -7,7 +7,8 @@ from PyInstaller.utils.hooks import collect_submodules
 version_text = Path('src/agent_quality_eval/__init__.py').read_text(encoding='utf-8')
 version = re.search(r'__version__\s*=\s*[\'"]([^\'"]+)[\'"]', version_text).group(1)
 
-hiddenimports = ['psutil', 'requests', 'dotenv', 'click', 'colorama', 'pystray', 'PIL', 'PIL.Image', 'PIL.ImageDraw']
+hiddenimports = ['psutil', 'requests', 'dotenv', 'click', 'colorama', 'PIL', 'PIL.Image', 'PIL.ImageDraw']
+hiddenimports += collect_submodules('pystray')
 hiddenimports += collect_submodules('agent_cot')
 hiddenimports += collect_submodules('agent_quality_eval')
 hiddenimports += collect_submodules('fastapi')

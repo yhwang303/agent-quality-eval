@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { SessionOverview, SessionCoT, ResponseReport, TurnEvalReport, TurnCoT } from './types';
+import type { SessionOverview, SessionCoT, ResponseReport, TurnEvalReport, TurnCoT, EvalEvent } from './types';
 import type { SelectedNode } from './components/SpanTree';
 import { api } from './hooks/api';
 import SessionList from './components/SessionList';
@@ -10,6 +10,7 @@ import type { OtelSelectedNode } from './components/OtelPanel';
 import './App.css';
 
 type RightTab = 'detail' | 'otel';
+type TurnRef = { session_id: string; turn_index: number };
 
 const INCOMPLETE_EVAL_STALE_MS = 10 * 60 * 1000;
 
@@ -21,6 +22,23 @@ function isIncompleteEvalFresh(report: TurnEvalReport | undefined): boolean {
   const started = rawStarted ? Date.parse(rawStarted) : Number.NaN;
   if (!Number.isFinite(started)) return true;
   return Date.now() - started < INCOMPLETE_EVAL_STALE_MS;
+}
+
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map(item => stableStringify(item)).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`).join(',')}}`;
+}
+
+function stableTextHash(value: unknown): string {
+  const text = typeof value === 'string' ? value : stableStringify(value ?? {});
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 export default function App() {
@@ -36,15 +54,23 @@ export default function App() {
   const [liveCriticTurns, setLiveCriticTurns] = useState<Record<string, any>>({});
   const [turnEvalLoadingKey, setTurnEvalLoadingKey] = useState<string | null>(null);
   const [turnEvalError, setTurnEvalError] = useState<string | null>(null);
-  const [abBaseline, setAbBaseline] = useState<{ session_id: string; turn_index: number } | null>(null);
-  const [abCandidate, setAbCandidate] = useState<{ session_id: string; turn_index: number } | null>(null);
+  const [abBaseline, setAbBaseline] = useState<TurnRef | null>(null);
+  const [abCandidate, setAbCandidate] = useState<TurnRef | null>(null);
   const [abResult, setAbResult] = useState<any | null>(null);
   const [abResultCache, setAbResultCache] = useState<Record<string, any>>({});
   const [abLoading, setAbLoading] = useState(false);
   const [abCompareOpen, setAbCompareOpen] = useState(false);
   const [abNotice, setAbNotice] = useState<string | null>(null);
+  const [abMode, setAbMode] = useState<'ab' | 'regression'>('ab');
+  const [pendingTurnJump, setPendingTurnJump] = useState<TurnRef | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(() => new URLSearchParams(window.location.search).get('settings') === '1');
   const [hookHealthOpen, setHookHealthOpen] = useState(false);
+  const [uploadTraceOpen, setUploadTraceOpen] = useState(false);
+  const [evalLogOpen, setEvalLogOpen] = useState(false);
+  const [referenceEvalTurn, setReferenceEvalTurn] = useState<TurnRef | null>(null);
+  const [regressionGoldOpen, setRegressionGoldOpen] = useState(false);
+  const [regressionReference, setRegressionReference] = useState<any | null>(null);
+  const settingsEventSeqRef = useRef<number | null>(null);
   // v0.11.2：右侧栏 Tab 切换 —— 详情视图 ↔ OpenTelemetry GenAI 视图
   const [rightTab, setRightTab] = useState<RightTab>('detail');
 
@@ -89,11 +115,37 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let stopped = false;
+    const checkUiEvents = () => {
+      api.getUiEvents()
+        .then(data => {
+          if (stopped) return;
+          const nextSeq = Number(data.settings_open_seq || 0);
+          if (settingsEventSeqRef.current === null) {
+            settingsEventSeqRef.current = nextSeq;
+            return;
+          }
+          if (nextSeq > settingsEventSeqRef.current) {
+            settingsEventSeqRef.current = nextSeq;
+            setSettingsOpen(true);
+          }
+        })
+        .catch(() => {});
+    };
+    checkUiEvents();
+    const timer = window.setInterval(checkUiEvents, 800);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   // 加载 session 列表
   useEffect(() => {
     api.getSessions()
       .then(setSessions)
-      .catch(() => setError('无法连接后端，请确认 API 服务已启动（python backend/main.py）'));
+      .catch(() => setError('无法连接后端，请确认 API 服务已启动。'));
   }, []);
 
   // 选中 session 时加载详情
@@ -180,20 +232,54 @@ export default function App() {
     ? { session_id: selectedNode.cot.session_id, turn_index: selectedNode.turn.turn_index }
     : null;
   const sameTurnRef = (
-    left: { session_id: string; turn_index: number } | null,
-    right: { session_id: string; turn_index: number } | null,
+    left: TurnRef | null,
+    right: TurnRef | null,
   ) => Boolean(left && right && left.session_id === right.session_id && left.turn_index === right.turn_index);
   const abPairKey = (
-    baselineRef: { session_id: string; turn_index: number } | null,
-    candidateRef: { session_id: string; turn_index: number } | null,
-  ) => (
-    baselineRef && candidateRef
-      ? `${baselineRef.session_id}:${baselineRef.turn_index}__${candidateRef.session_id}:${candidateRef.turn_index}`
-      : ''
-  );
-  const abRefLabel = (ref: { session_id: string; turn_index: number } | null) => (
+    baselineRef: TurnRef | null,
+    candidateRef: TurnRef | null,
+  ) => {
+    if (!baselineRef || !candidateRef) return '';
+    const goldKey = abMode === 'regression' && regressionReference?.reference_answer
+      ? `__gold:${stableTextHash(regressionReference.reference_answer)}`
+      : '';
+    // A/B is always blind now; baked into the key so the cache shape is stable
+    // even if the toggle is reintroduced later.
+    const blindKey = abMode === 'ab' ? '__blind' : '';
+    return `${abMode}__${baselineRef.session_id}:${baselineRef.turn_index}__${candidateRef.session_id}:${candidateRef.turn_index}${goldKey}${blindKey}`;
+  };
+  const abRefLabel = (ref: TurnRef | null) => (
     ref ? `${ref.session_id.slice(0, 8)} · 第 ${ref.turn_index} 轮` : '未选择'
   );
+  const selectTurnInCot = useCallback((ref: TurnRef, currentCot: SessionCoT) => {
+    const turn = currentCot.turns.find(item => item.turn_index === ref.turn_index);
+    if (!turn) return false;
+    setRightTab('detail');
+    setSelectedNode({ kind: 'turn', turn, cot: currentCot });
+    return true;
+  }, []);
+  const jumpToAbRef = useCallback((ref: TurnRef | null, roleLabel: string) => {
+    if (!ref) return;
+    setRightTab('detail');
+    if (cot?.session_id === ref.session_id && selectTurnInCot(ref, cot)) {
+      setPendingTurnJump(null);
+      setAbNotice(`已跳转到${roleLabel}：${abRefLabel(ref)}`);
+      return;
+    }
+    setPendingTurnJump(ref);
+    setSelectedId(ref.session_id);
+    setAbNotice(`正在跳转到${roleLabel}：${abRefLabel(ref)}`);
+  }, [cot, selectTurnInCot]);
+
+  useEffect(() => {
+    if (!pendingTurnJump || !cot || loading || cot.session_id !== pendingTurnJump.session_id) return;
+    if (selectTurnInCot(pendingTurnJump, cot)) {
+      setAbNotice(`已跳转到：${abRefLabel(pendingTurnJump)}`);
+    } else {
+      setAbNotice(`未找到目标 trace：${abRefLabel(pendingTurnJump)}`);
+    }
+    setPendingTurnJump(null);
+  }, [pendingTurnJump, cot, loading, selectTurnInCot]);
   const markBaseline = () => {
     if (!selectedTurnRef) return;
     setAbBaseline(selectedTurnRef);
@@ -248,6 +334,11 @@ export default function App() {
         setTurnEvalLoadingKey(prev => (prev === key ? null : prev));
       });
   }, []);
+  const handleReferenceEvalTurn = useCallback((turn: TurnCoT, currentCot: SessionCoT) => {
+    setRightTab('detail');
+    setSelectedNode({ kind: 'turn', turn, cot: currentCot });
+    setReferenceEvalTurn({ session_id: currentCot.session_id, turn_index: turn.turn_index });
+  }, []);
 
   const compareAb = useCallback(() => {
     if (!abBaseline || !abCandidate) return;
@@ -259,17 +350,76 @@ export default function App() {
       return;
     }
     setAbLoading(true);
+    setAbResult(null);
     setAbCompareOpen(true);
-    api.compareTurns(abBaseline, abCandidate)
+    api.compareTurns(
+      abBaseline,
+      abCandidate,
+      abMode,
+      abMode === 'regression' ? regressionReference?.reference_answer : undefined,
+      abMode === 'ab',  // A/B is always blind; regression keeps its own gold-standard pathway.
+    )
       .then(result => {
         setAbResult(result);
-        if (result?.llm_compare?.status === 'completed') {
+        if (result?.llm_compare?.status === 'completed' || result?.regression_compare?.status === 'completed') {
           setAbResultCache(prev => ({ ...prev, [pairKey]: result }));
         }
       })
       .catch((err: any) => setAbResult({ error: err?.response?.data?.detail || err?.message || 'Compare failed' }))
       .finally(() => setAbLoading(false));
-  }, [abBaseline, abCandidate, abResultCache]);
+  }, [abBaseline, abCandidate, abMode, abResultCache, regressionReference]);
+
+  const restoreEvalEvent = useCallback((event: EvalEvent) => {
+    const target = event.target || {};
+    const mode = event.event_type === 'regression' ? 'regression' : 'ab';
+    if (event.event_type === 'ab' || event.event_type === 'regression') {
+      const baseline = target.baseline || {
+        session_id: event.baseline_session_id,
+        turn_index: event.baseline_turn_index,
+      };
+      const candidate = target.candidate || {
+        session_id: event.candidate_session_id,
+        turn_index: event.candidate_turn_index,
+      };
+      if (baseline?.session_id && candidate?.session_id) {
+        setAbBaseline({ session_id: baseline.session_id, turn_index: Number(baseline.turn_index || 0) });
+        setAbCandidate({ session_id: candidate.session_id, turn_index: Number(candidate.turn_index || 0) });
+        setAbMode(mode);
+        const summary = event.summary || {};
+        setAbResult({
+          from_eval_log: true,
+          compare_mode: mode,
+          baseline: { session_id: baseline.session_id, turn_index: Number(baseline.turn_index || 0) },
+          candidate: { session_id: candidate.session_id, turn_index: Number(candidate.turn_index || 0) },
+          summary,
+          llm_compare: mode === 'ab' ? {
+            status: 'saved',
+            comparison_verdict: summary.comparison_verdict || event.verdict,
+            summary_conclusion: summary.summary_conclusion,
+          } : undefined,
+          regression_gate: mode === 'regression' ? {
+            verdict: summary.gate_verdict || event.verdict,
+            blocking_reasons: summary.blocking_reasons || [],
+            warning_reasons: summary.warning_reasons || [],
+          } : undefined,
+          regression_compare: mode === 'regression' ? {
+            status: 'saved',
+            gate_verdict: summary.gate_verdict || event.verdict,
+            summary_conclusion: summary.summary_conclusion,
+            blocking_reasons: summary.blocking_reasons || [],
+            warning_reasons: summary.warning_reasons || [],
+          } : undefined,
+        });
+        setAbCompareOpen(true);
+      }
+      return;
+    }
+    const sessionId = target.session_id || event.session_id;
+    const turnIndex = target.turn_index ?? event.turn_index;
+    if (sessionId && turnIndex != null) {
+      jumpToAbRef({ session_id: sessionId, turn_index: Number(turnIndex) }, 'Eval Log');
+    }
+  }, [jumpToAbRef]);
 
   return (
     <div className="app">
@@ -301,11 +451,25 @@ export default function App() {
             </button>
             <div className="ab-ref-strip">
               <span className={`ab-ref-chip ${abBaseline ? 'is-set' : ''}`}>
-                <span>基线：{abRefLabel(abBaseline)}</span>
+                <button
+                  className="ab-ref-jump"
+                  disabled={!abBaseline}
+                  onClick={() => jumpToAbRef(abBaseline, '基线')}
+                  title={abBaseline ? `跳转到基线 trace：${abRefLabel(abBaseline)}` : '尚未选择基线'}
+                >
+                  基线：{abRefLabel(abBaseline)}
+                </button>
                 {abBaseline && <button className="ab-chip-clear" onClick={clearBaseline} title="清空基线">×</button>}
               </span>
               <span className={`ab-ref-chip ${abCandidate ? 'is-set is-candidate' : ''}`}>
-                <span>候选：{abRefLabel(abCandidate)}</span>
+                <button
+                  className="ab-ref-jump"
+                  disabled={!abCandidate}
+                  onClick={() => jumpToAbRef(abCandidate, '候选')}
+                  title={abCandidate ? `跳转到候选 trace：${abRefLabel(abCandidate)}` : '尚未选择候选'}
+                >
+                  候选：{abRefLabel(abCandidate)}
+                </button>
                 {abCandidate && <button className="ab-chip-clear" onClick={clearCandidate} title="清空候选">×</button>}
               </span>
               {abNotice && <span className="ab-notice">{abNotice}</span>}
@@ -313,15 +477,42 @@ export default function App() {
             <button className="btn-refresh ab-clear" disabled={!abBaseline && !abCandidate} onClick={clearAbSelection} title="清空基线和候选">
               清空
             </button>
+            <label className={`ab-mode-toggle ${abMode === 'regression' ? 'is-regression' : ''}`} title="使用回归门禁视角检查 candidate 是否破坏 baseline 已具备的能力">
+              <input
+                type="checkbox"
+                checked={abMode === 'regression'}
+                onChange={e => {
+                  setAbMode(e.target.checked ? 'regression' : 'ab');
+                  setAbResult(null);
+                }}
+              />
+              <span>回归检测</span>
+            </label>
+            {abMode === 'regression' && (
+              <button
+                className={`btn-refresh regression-gold ${regressionReference ? 'is-active' : ''}`}
+                disabled={!abBaseline || !abCandidate}
+                onClick={() => setRegressionGoldOpen(true)}
+                title="为本次回归检测上传标准答案"
+              >
+                {regressionReference ? '已绑定' : 'Gold'}
+              </button>
+            )}
             <button className={`btn-refresh ab-compare ${abBaseline && abCandidate ? 'is-ready' : ''}`} disabled={!abBaseline || !abCandidate || abLoading} onClick={compareAb}>
-              {abLoading ? '对比中...' : 'A/B 对比'}
+              {abLoading ? '对比中...' : abMode === 'regression' ? '回归检测' : 'A/B 对比'}
             </button>
           </div>
           <button className="btn-refresh" onClick={() => setSettingsOpen(true)}>
             API 设置
           </button>
+          <button className="btn-refresh" onClick={() => setUploadTraceOpen(true)}>
+            上传 Trace
+          </button>
           <button className="btn-refresh" onClick={() => setHookHealthOpen(true)}>
             IDE Hook 检查
+          </button>
+          <button className="btn-refresh" onClick={() => setEvalLogOpen(true)}>
+            Eval Log
           </button>
           <button className="btn-refresh" onClick={() => {
             api.getSessions().then(setSessions).catch(() => {});
@@ -339,12 +530,58 @@ export default function App() {
 
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {hookHealthOpen && <HookHealthDialog onClose={() => setHookHealthOpen(false)} />}
+      {uploadTraceOpen && (
+        <UploadTraceDialog
+          onClose={() => setUploadTraceOpen(false)}
+          onUploaded={(sessionId) => {
+            setUploadTraceOpen(false);
+            api.getSessions().then(list => {
+              setSessions(list);
+              const target = list.find(s => s.session_id === sessionId);
+              if (target) setSelectedId(target.session_id);
+            }).catch(() => {});
+          }}
+        />
+      )}
+      {evalLogOpen && (
+        <EvalLogDialog
+          sessions={sessions}
+          onClose={() => setEvalLogOpen(false)}
+          onSelect={restoreEvalEvent}
+        />
+      )}
+      {referenceEvalTurn && (
+        <ReferenceEvalDialog
+          mode="turn"
+          selectedTurn={referenceEvalTurn}
+          onClose={() => setReferenceEvalTurn(null)}
+        />
+      )}
+      {regressionGoldOpen && (
+        <ReferenceEvalDialog
+          mode="regression"
+          selectedTurn={null}
+          initialReference={regressionReference}
+          onClose={() => setRegressionGoldOpen(false)}
+          onSaveRegressionReference={data => {
+            setRegressionReference(data);
+            setAbResult(null);
+            setRegressionGoldOpen(false);
+          }}
+          onClearRegressionReference={() => {
+            setRegressionReference(null);
+            setAbResult(null);
+          }}
+        />
+      )}
       {abCompareOpen && (
         <AbCompareDialog
           result={abResult}
           loading={abLoading}
           baseline={abBaseline}
           candidate={abCandidate}
+          compareMode={abMode}
+          onRefresh={compareAb}
           onClose={() => setAbCompareOpen(false)}
         />
       )}
@@ -390,10 +627,13 @@ export default function App() {
               selectedNode={selectedNode}
               onSelectNode={setSelectedNode}
               onEvalTurn={handleEvalTurn}
+              onReferenceEvalTurn={handleReferenceEvalTurn}
               turnEvalReports={turnEvalReports}
               turnEvalLoadingKey={turnEvalLoadingKey}
               liveCritic={liveCritic}
               liveCriticTurns={liveCriticTurns}
+              abBaseline={abBaseline}
+              abCandidate={abCandidate}
             />
           )}
         </main>
@@ -444,17 +684,296 @@ export default function App() {
   );
 }
 
+function EvalLogDialog({
+  onClose,
+  onSelect,
+}: {
+  sessions: SessionOverview[];
+  onClose: () => void;
+  onSelect: (event: EvalEvent) => void;
+}) {
+  const [events, setEvents] = useState<EvalEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    api.listEvalEvents({ limit: 100 })
+      .then(data => setEvents(data.events || []))
+      .catch((err: any) => setError(err?.response?.data?.detail || err?.message || 'Failed to load eval log'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const visibleEvents = expanded ? events : events.slice(0, 10);
+
+  const eventTitle = (event: EvalEvent) => {
+    if (event.event_type === 'ab') return `A/B ${event.winner || event.verdict || 'mixed'}`;
+    if (event.event_type === 'regression') return `Regression ${event.summary?.gate_verdict || event.verdict || 'WARN'}`;
+    if (event.event_type === 'reference') return `Reference ${event.verdict || '-'}`;
+    if (event.event_type === 'gold') return 'Gold bound';
+    return `Trace ${event.verdict || '-'}`;
+  };
+  const eventSummary = (event: EvalEvent) => {
+    const summary = event.summary || {};
+    return summary.summary_conclusion
+      || summary.blocking_reasons?.[0]
+      || summary.warning_reasons?.[0]
+      || (summary.final_score != null ? `score ${(Number(summary.final_score) * 100).toFixed(0)}%` : '')
+      || (summary.quality_delta != null ? `quality delta ${Number(summary.quality_delta).toFixed(3)}` : '')
+      || '';
+  };
+  const eventTarget = (event: EvalEvent) => {
+    const summary = event.summary || {};
+    const baseline = summary.baseline || event.target?.baseline;
+    const candidate = summary.candidate || event.target?.candidate;
+    if (baseline?.session_id && candidate?.session_id) {
+      return `${String(baseline.session_id).slice(0, 8)} #${baseline.turn_index} -> ${String(candidate.session_id).slice(0, 8)} #${candidate.turn_index}`;
+    }
+    const sessionId = event.session_id || event.target?.session_id;
+    const turnIndex = event.turn_index ?? event.target?.turn_index;
+    return sessionId ? `${String(sessionId).slice(0, 8)} #${turnIndex ?? '-'}` : '';
+  };
+  const formatTime = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return String(iso || '').slice(0, 16);
+    }
+  };
+  const handleSelect = (event: EvalEvent) => {
+    onSelect(event);
+    onClose();
+  };
+
+  return (
+    <div className="eval-log-backdrop" onClick={onClose}>
+      <div className="eval-log-dialog" onClick={e => e.stopPropagation()}>
+        <div className="eval-log-head">
+          <div>
+            <h2>Eval Log</h2>
+            <p>Recent eval activity</p>
+          </div>
+          <button className="eval-log-close" onClick={onClose}>×</button>
+        </div>
+        {loading && <div className="eval-log-empty">Loading...</div>}
+        {error && <div className="eval-log-empty">{error}</div>}
+        {!loading && !error && events.length === 0 && <div className="eval-log-empty">No eval events yet.</div>}
+        <div className="eval-log-list">
+          {visibleEvents.map(event => (
+            <button key={event.id} className={`eval-log-item eval-log-${event.event_type}`} onClick={() => handleSelect(event)}>
+              <div className="eval-log-main">
+                <span className="eval-log-type">{event.event_type}</span>
+                <div>
+                  <strong>{eventTitle(event)}</strong>
+                  {eventSummary(event) && <p>{eventSummary(event)}</p>}
+                </div>
+                <time>{formatTime(event.created_at)}</time>
+              </div>
+              <div className="eval-log-meta">
+                <span>{event.project_name || 'Unknown Project'}</span>
+                {eventTarget(event) && <span>{eventTarget(event)}</span>}
+                <span>{event.has_gold ? 'Gold' : 'No gold'}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+        {events.length > 10 && (
+          <button className="eval-log-more" onClick={() => setExpanded(prev => !prev)}>
+            {expanded ? '收起' : `展开全部 ${events.length} 条`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReferenceEvalDialog({
+  mode,
+  selectedTurn,
+  initialReference,
+  onClose,
+  onSaveRegressionReference,
+  onClearRegressionReference,
+}: {
+  mode: 'turn' | 'regression';
+  selectedTurn: { session_id: string; turn_index: number } | null;
+  initialReference?: any | null;
+  onClose: () => void;
+  onSaveRegressionReference?: (data: any) => void;
+  onClearRegressionReference?: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<any | null>(null);
+  const [preview, setPreview] = useState<any | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const isRegression = mode === 'regression';
+  const busy = saving || loadingExisting;
+  const extractPreview = (data: any) => data?.reference_answer || data?.case || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+
+    if (isRegression) {
+      setSaved(initialReference || null);
+      setPreview(extractPreview(initialReference));
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!selectedTurn) {
+      setSaved(null);
+      setPreview(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setLoadingExisting(true);
+    api.getTurnReferenceAnswer(selectedTurn.session_id, selectedTurn.turn_index)
+      .then(data => {
+        if (cancelled) return;
+        const reference = data?.bound ? data.reference_answer : null;
+        setSaved(reference);
+        setPreview(extractPreview(reference));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSaved(null);
+        setPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingExisting(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRegression, selectedTurn?.session_id, selectedTurn?.turn_index, initialReference]);
+
+  const handleUpload = async (file: File | undefined) => {
+    if (!file) return;
+    setSaving(true);
+    setError(null);
+    setSaved(null);
+    setPreview(null);
+    try {
+      const content = await file.text();
+      const data = isRegression
+        ? await api.normalizeReferenceAnswer(file.name, content)
+        : await api.saveTurnReferenceAnswer(selectedTurn!.session_id, selectedTurn!.turn_index, file.name, content);
+      setSaved(data);
+      setPreview(extractPreview(data));
+      if (isRegression) onSaveRegressionReference?.(data);
+    } catch (err: any) {
+      setError(String(err?.response?.data?.detail || err?.message || '标准答案上传失败'));
+    } finally {
+      setSaving(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleClear = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      if (isRegression) {
+        onClearRegressionReference?.();
+      } else if (selectedTurn) {
+        await api.deleteTurnReferenceAnswer(selectedTurn.session_id, selectedTurn.turn_index);
+      }
+      setSaved(null);
+      setPreview(null);
+    } catch (err: any) {
+      setError(String(err?.response?.data?.detail || err?.message || '清除标准答案失败'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const targetText = isRegression
+    ? '回归检测'
+    : (selectedTurn ? `${selectedTurn.session_id.slice(0, 8)} · 第 ${selectedTurn.turn_index} 轮` : '未选择 trace');
+  const expected = String(preview?.expected_answer || '');
+  const keywords = Array.isArray(preview?.keywords) ? preview.keywords : [];
+
+  return (
+    <div className="reference-modal-backdrop" onClick={onClose}>
+      <div className="reference-modal reference-modal-compact" onClick={e => e.stopPropagation()}>
+        <div className="reference-modal-head">
+          <div>
+            <span>{targetText}</span>
+            <strong>标准答案</strong>
+            <p>{isRegression ? '上传用于本次回归检测的标准答案。' : '上传这条 trace 的标准答案。保存后回到主界面点击 Eval，会按该标准评审。'}</p>
+          </div>
+          <button className="settings-close" onClick={onClose}>×</button>
+        </div>
+
+        <div className="reference-modal-body">
+          <div className="reference-control-card">
+            <div className="reference-control-top">
+              <div>
+                <strong>标准文件</strong>
+                <span>支持 JSON / YAML / Markdown / TXT。系统只做字段规整，不改写答案内容。</span>
+              </div>
+              <button className="reference-upload-btn" disabled={busy || (!isRegression && !selectedTurn)} onClick={() => fileInputRef.current?.click()}>
+                {saving ? '保存中...' : loadingExisting ? '读取中...' : '上传'}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,.yaml,.yml,.md,.markdown,.txt"
+                style={{ display: 'none' }}
+                onChange={e => handleUpload(e.target.files?.[0])}
+              />
+            </div>
+            {loadingExisting && <div className="reference-hint">正在读取这条 trace 已绑定的标准答案...</div>}
+            {error && <div className="reference-error">{error}</div>}
+            {saved && (
+              <div className="reference-saved">
+                <div>
+                  <strong>已保存</strong>
+                  <span>{isRegression ? '运行回归检测时会带上这个标准答案。' : '回到主界面点击 Eval，即可按这个标准答案评估。'}</span>
+                </div>
+                <button className="reference-clear-btn" disabled={busy} onClick={handleClear}>
+                  清除绑定
+                </button>
+              </div>
+            )}
+            {preview && (
+              <div className="reference-preview">
+                <span>{preview.title || preview.case_id || '标准答案'}</span>
+                <pre>{expected || '未解析到标准答案内容。'}</pre>
+                {keywords.length > 0 && <em>{keywords.slice(0, 8).join(' / ')}</em>}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AbCompareDialog({
   result,
   loading,
   baseline,
   candidate,
+  compareMode,
+  onRefresh,
   onClose,
 }: {
   result: any | null;
   loading: boolean;
   baseline: { session_id: string; turn_index: number } | null;
   candidate: { session_id: string; turn_index: number } | null;
+  compareMode: 'ab' | 'regression';
+  onRefresh?: () => void;
   onClose: () => void;
 }) {
   const dimensionLabels: Record<string, string> = {
@@ -488,8 +1007,9 @@ function AbCompareDialog({
   };
   const fmtDuration = (value?: number | null) => {
     if (typeof value !== 'number' || Number.isNaN(value)) return '--';
-    if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
-    return `${Math.round(value)}ms`;
+    // Always shown in minutes for consistency with the LLM-authored review
+    // text and evidence quotes, which are normalized to minutes too.
+    return `${(value / 60000).toFixed(1)}min`;
   };
   const refLabel = (ref: { session_id: string; turn_index: number } | null) => (
     ref ? `${ref.session_id.slice(0, 12)} · Turn ${ref.turn_index}` : '未选择'
@@ -500,6 +1020,9 @@ function AbCompareDialog({
   const candidateMeta = candidateData.trace_meta || {};
   const summary = result?.summary || {};
   const llmCompare = result?.llm_compare || {};
+  const isRegressionMode = (result?.compare_mode || compareMode) === 'regression';
+  const regressionGate = result?.regression_gate || {};
+  const regressionCompare = result?.regression_compare || {};
   const diffs = Array.isArray(result?.diffs) ? result.diffs : [];
   const groupMap = new Map<string, any>();
   for (const group of baselineData.groups || []) {
@@ -544,6 +1067,21 @@ function AbCompareDialog({
     candidate: '候选',
     tie: '持平',
     unclear: '不明确',
+  };
+  const regressionDimensionLabels: Record<string, string> = {
+    capability_preservation: '能力保持',
+    user_goal_coverage: '用户目标覆盖',
+    behavioral_change_risk: '行为变化风险',
+    evidence_faithfulness: '证据忠实度',
+    workflow_integrity: '流程完整性',
+    efficiency_regression: '效率退化',
+  };
+  const regressionDimensions = Object.keys(regressionDimensionLabels);
+  const listOf = (value: any): string[] => Array.isArray(value) ? value.filter(Boolean).map(String) : [];
+  const gateText: Record<string, string> = {
+    PASS: '通过',
+    WARN: '需复核',
+    FAIL: '阻断',
   };
   const formatPairs = (pairs: any[]) => (
     Array.isArray(pairs) && pairs.length
@@ -604,18 +1142,23 @@ function AbCompareDialog({
     </div>
   );
   const renderCompareReport = () => {
+    if (isRegressionMode) return null;
     if (!llmCompare || Object.keys(llmCompare).length === 0) return null;
     const completed = llmCompare.status === 'completed';
     return (
       <div className={`ab-llm-report ${completed ? 'is-completed' : 'is-muted'}`}>
         <div className="ab-llm-head">
           <div>
-            <span>LLM A/B 对比分析</span>
+            <span>LLM A/B 对比分析 · 盲审</span>
             <strong>{verdictText[llmCompare.comparison_verdict] || llmCompare.comparison_verdict || '对比报告'}</strong>
           </div>
           <em>{llmCompare.cache_hit ? '已复用' : (llmCompare.status || 'unknown')}{llmCompare.model ? ` · ${llmCompare.model}` : ''}</em>
         </div>
-        <p className="ab-llm-summary">{llmCompare.summary_conclusion || llmCompare.reason}</p>
+        <div className="ab-conclusion-card">
+          <span>高亮结论</span>
+          <strong>{verdictText[llmCompare.comparison_verdict] || llmCompare.comparison_verdict || '对比结论'}</strong>
+          <p>{llmCompare.summary_conclusion || llmCompare.reason || '当前没有可展示的 LLM 对比结论。'}</p>
+        </div>
         {!completed && llmCompare.reason && <p className="ab-llm-warning">{llmCompare.reason}</p>}
         <div className="ab-llm-dimensions">
           <div className="ab-llm-dimension is-wide">
@@ -629,9 +1172,79 @@ function AbCompareDialog({
                 <span>{dimensionLabels[key]} · {winnerText[item.winner] || item.winner || '不明确'}</span>
                 <strong>{item.verdict || 'unclear'}</strong>
                 <p>{item.review || `该维度缺少可展示内容，请结合总体结论和下方确定性指标复核。`}</p>
+                <AbEvidenceBlock
+                  baseline={item.baseline_evidence}
+                  candidate={item.candidate_evidence}
+                />
               </div>
             );
           })}
+        </div>
+      </div>
+    );
+  };
+  const renderRegressionReport = () => {
+    if (!isRegressionMode) return null;
+    const gateVerdict = String(regressionGate.verdict || regressionCompare.gate_verdict || 'WARN').toUpperCase();
+    const blockingReasons = listOf(regressionGate.blocking_reasons);
+    const warningReasons = listOf(regressionGate.warning_reasons);
+    const newFailures = Array.isArray(regressionGate.new_failed_assertions) ? regressionGate.new_failed_assertions : [];
+    const completed = regressionCompare.status === 'completed';
+    return (
+      <div className={`ab-llm-report regression-report regression-${gateVerdict.toLowerCase()} ${completed ? 'is-completed' : 'is-muted'}`}>
+        <div className="ab-llm-head">
+          <div>
+            <span>回归检测</span>
+            <strong>{gateText[gateVerdict] || gateVerdict}</strong>
+          </div>
+          <em>{regressionCompare.cache_hit ? '已复用' : (regressionCompare.status || 'deterministic')}{regressionCompare.model ? ` · ${regressionCompare.model}` : ''}</em>
+        </div>
+        <div className={`ab-conclusion-card regression-conclusion-${gateVerdict.toLowerCase()}`}>
+          <span>高亮结论</span>
+          <strong>{gateText[gateVerdict] || gateVerdict}</strong>
+          <p>{regressionCompare.summary_conclusion || `回归检测结论：${gateText[gateVerdict] || gateVerdict}。`}</p>
+        </div>
+        <div className="regression-gate-grid">
+          <div className="regression-gate-card">
+            <span>阻断原因</span>
+            {blockingReasons.length ? blockingReasons.map((item, idx) => <p key={idx}>{item}</p>) : <p>没有检测到阻断级回归。</p>}
+          </div>
+          <div className="regression-gate-card">
+            <span>复核提醒</span>
+            {warningReasons.length ? warningReasons.map((item, idx) => <p key={idx}>{item}</p>) : <p>没有检测到需要复核的回归风险。</p>}
+          </div>
+          <div className="regression-gate-card">
+            <span>新增失败断言</span>
+            {newFailures.length ? newFailures.slice(0, 8).map((item: any) => (
+              <p key={item.key || item.label_zh}>{item.label_zh || item.label_en || item.key} · {item.severity || 'medium'}</p>
+            )) : <p>没有 baseline 已通过但 candidate 失败的断言。</p>}
+          </div>
+          <div className="regression-gate-card">
+            <span>保持的能力</span>
+            {listOf(regressionCompare.preserved_capabilities).length ? listOf(regressionCompare.preserved_capabilities).map((item, idx) => <p key={idx}>{item}</p>) : (
+              <p>保留了 {regressionGate.preserved_passed_assertions || 0} / {regressionGate.baseline_passed_assertions || 0} 个 baseline 已通过断言。</p>
+            )}
+          </div>
+        </div>
+        <div className="ab-llm-dimensions">
+          {regressionDimensions.map(key => {
+            const item = regressionCompare[key] || {};
+            return (
+              <div className="ab-llm-dimension" key={key}>
+                <span>{regressionDimensionLabels[key]}</span>
+                <strong>{item.verdict || 'unclear'}</strong>
+                <p>{item.review || '该维度没有 LLM 评审内容，请结合确定性 gate 和下方断言差异复核。'}</p>
+                <AbEvidenceBlock
+                  baseline={item.baseline_evidence}
+                  candidate={item.candidate_evidence}
+                />
+              </div>
+            );
+          })}
+          <div className="ab-llm-dimension is-wide">
+            <span>人工复核备注</span>
+            <p>{listOf(regressionCompare.manual_review_notes).join(' / ') || '处理 WARN 或 FAIL 前，请先复核下方断言差异和 trace 证据。'}</p>
+          </div>
         </div>
       </div>
     );
@@ -642,8 +1255,8 @@ function AbCompareDialog({
       <div className="ab-modal" onClick={e => e.stopPropagation()}>
         <div className="ab-modal-head">
           <div>
-            <strong>A/B 评估对比</strong>
-            <span>逐项比较 baseline 与 candidate 的断言、分组和资源消耗</span>
+            <strong>{isRegressionMode ? '回归检测' : 'A/B 评估对比'}</strong>
+            <span>{isRegressionMode ? '检查 candidate 是否破坏 baseline 已具备的能力、断言、trace 证据和资源表现。' : '逐项比较 baseline 与 candidate 的断言、分组和资源消耗'}</span>
           </div>
           <button className="settings-close" onClick={onClose}>×</button>
         </div>
@@ -651,7 +1264,7 @@ function AbCompareDialog({
         {loading && (
           <div className="ab-modal-loading">
             <div className="loading-spinner" />
-            <span>正在生成 A/B 对比报告...</span>
+            <span>{isRegressionMode ? '正在生成回归检测报告...' : '正在生成 A/B 对比报告...'}</span>
           </div>
         )}
 
@@ -661,6 +1274,13 @@ function AbCompareDialog({
 
         {!loading && !result?.error && (
           <>
+            {result?.from_eval_log && (
+              <div className="ab-saved-log-note">
+                <span>Saved Eval Log conclusion</span>
+                <p>当前只展示日志里的结论级元数据；需要完整报告可重新调用 compare API。</p>
+                <button className="btn-refresh" onClick={onRefresh}>重新生成完整报告</button>
+              </div>
+            )}
             <div className="ab-trace-identity">
               {renderTraceCard('baseline', baseline, baselineData, baselineMeta)}
               {renderTraceCard('candidate', candidate, candidateData, candidateMeta)}
@@ -690,6 +1310,7 @@ function AbCompareDialog({
             </div>
 
             {renderCompareReport()}
+            {renderRegressionReport()}
 
             <div className="ab-chart-section">
               <div className="ab-section-title">断言分组通过率</div>
@@ -748,6 +1369,9 @@ function AbCompareDialog({
 
             <div className="ab-chart-section">
               <div className="ab-section-title">断言差异明细</div>
+              {summary?.assertion_patterns && (
+                <AssertionPatternStrip patterns={summary.assertion_patterns} />
+              )}
               <div className="ab-diff-head">
                 <span>断言</span>
                 <strong className="is-baseline">Base</strong>
@@ -760,6 +1384,7 @@ function AbCompareDialog({
                     <div>
                       <strong>{row.label_zh || row.key}</strong>
                       <span>{row.category} · {row.severity}</span>
+                      {row.pattern && <PatternBadge pattern={row.pattern} />}
                     </div>
                     <em title={row.baseline_reason || ''} className={row.baseline_passed ? 'is-pass' : 'is-fail'}>{row.baseline_passed ? '通过' : '失败'}</em>
                     <em title={row.candidate_reason || ''} className={row.candidate_passed ? 'is-pass' : 'is-fail'}>{row.candidate_passed ? '通过' : '失败'}</em>
@@ -770,6 +1395,192 @@ function AbCompareDialog({
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+const PATTERN_META: Record<string, { label: string; tone: string; hint: string }> = {
+  non_discriminating: {
+    label: '双侧通过',
+    tone: 'mute',
+    hint: 'Base 与候选都通过；该断言无法区分版本差异，可能不该用作决策依据。',
+  },
+  always_failing: {
+    label: '双侧失败',
+    tone: 'warn',
+    hint: 'Base 与候选都失败；可能是断言本身坏掉，或任务超出当前能力上限。',
+  },
+  candidate_helps: {
+    label: '候选改善',
+    tone: 'pass',
+    hint: 'Base 失败但候选通过——候选确实带来收益。',
+  },
+  candidate_hurts: {
+    label: '候选退化',
+    tone: 'fail',
+    hint: 'Base 通过但候选失败——候选在这里帮倒忙。',
+  },
+  mixed: {
+    label: '单侧缺失',
+    tone: 'mute',
+    hint: '两侧断言集合不一致，无法直接对比。',
+  },
+};
+
+function PatternBadge({ pattern }: { pattern: string }) {
+  const meta = PATTERN_META[pattern];
+  if (!meta || pattern === 'mixed') return null;
+  return (
+    <span className={`ab-pattern-badge is-${meta.tone}`} title={meta.hint}>{meta.label}</span>
+  );
+}
+
+function AssertionPatternStrip({ patterns }: { patterns: Record<string, number> }) {
+  const total = Object.values(patterns || {}).reduce((acc, val) => acc + Number(val || 0), 0);
+  if (!total) return null;
+  const order = ['candidate_helps', 'candidate_hurts', 'non_discriminating', 'always_failing', 'mixed'];
+  const visible = order
+    .map(key => ({ key, count: Number(patterns?.[key] || 0), meta: PATTERN_META[key] }))
+    .filter(item => item.count > 0 && item.meta);
+  if (!visible.length) return null;
+  return (
+    <div className="ab-pattern-strip" role="list">
+      {visible.map(item => (
+        <div className={`ab-pattern-cell is-${item.meta.tone}`} role="listitem" key={item.key} title={item.meta.hint}>
+          <span>{item.meta.label}</span>
+          <strong>{item.count}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type AbEvidenceItem = { ref?: string; quote?: string; source?: string };
+
+function AbEvidenceBlock({ baseline, candidate }: { baseline: any; candidate: any }) {
+  const clean = (list: any): AbEvidenceItem[] => {
+    if (!Array.isArray(list)) return [];
+    return list.filter((e: any) => e && (e.ref || e.quote)).slice(0, 4);
+  };
+  const b = clean(baseline);
+  const c = clean(candidate);
+  if (!b.length && !c.length) return null;
+  const renderList = (label: string, items: AbEvidenceItem[]) => (
+    <div className="ab-evidence-side">
+      <div className="ab-evidence-head">{label}</div>
+      {items.length ? items.map((e, idx) => (
+        <div className="dp-critic-evidence-item" key={idx}>
+          {e.ref && <code className="dp-critic-evidence-ref">{e.ref}</code>}
+          {e.source && <span className="dp-critic-evidence-source">{e.source}</span>}
+          {e.quote && <span className="dp-critic-evidence-quote">{e.quote}</span>}
+        </div>
+      )) : <div className="ab-evidence-empty">无</div>}
+    </div>
+  );
+  return (
+    <div className="ab-evidence-block">
+      {renderList('Base 证据', b)}
+      {renderList('候选 证据', c)}
+    </div>
+  );
+}
+
+function UploadTraceDialog({ onClose, onUploaded }: { onClose: () => void; onUploaded: (sessionId: string) => void }) {
+  const [title, setTitle] = useState<string>('');
+  const [traceText, setTraceText] = useState<string>('');
+  const [transcriptText, setTranscriptText] = useState<string>('');
+  const [busy, setBusy] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onTraceFile = (file?: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setTraceText(String(reader.result || ''));
+    reader.onerror = () => setError('读取文件失败');
+    reader.readAsText(file);
+  };
+  const onTranscriptFile = (file?: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setTranscriptText(String(reader.result || ''));
+    reader.onerror = () => setError('读取 transcript 失败');
+    reader.readAsText(file);
+  };
+
+  const submit = async () => {
+    setError(null);
+    if (!traceText.trim()) {
+      setError('请粘贴或上传 trace 内容');
+      return;
+    }
+    let traceValue: any = traceText;
+    try {
+      traceValue = JSON.parse(traceText);
+    } catch {
+      // 非 JSON 也允许：后端 normalizer 会把它当作纯文本兜底为单 turn。
+    }
+    setBusy(true);
+    try {
+      const res = await api.uploadTrace({
+        source: 'user-upload',
+        title: title.trim() || undefined,
+        trace: traceValue,
+        transcript: transcriptText.trim() || undefined,
+      });
+      const sid = res?.session_id;
+      if (sid) onUploaded(sid);
+      else onClose();
+    } catch (err: any) {
+      setError(String(err?.response?.data?.detail || err?.message || '上传失败'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="settings-backdrop" onClick={onClose}>
+      <div className="settings-dialog upload-trace-dialog" onClick={e => e.stopPropagation()}>
+        <div className="settings-head">
+          <div>
+            <strong>上传 Trace</strong>
+            <span className="hook-health-sub">从外部来源导入一条 trace</span>
+          </div>
+          <button className="settings-close" onClick={onClose}>×</button>
+        </div>
+        <div className="upload-trace-body">
+          <label className="upload-trace-label">
+            <span>标题（可选）</span>
+            <input value={title} placeholder="便于识别这条 trace" onChange={e => setTitle(e.target.value)} />
+          </label>
+          <label className="upload-trace-label">
+            <span>Trace（必填，JSON 或文本）</span>
+            <input type="file" accept=".json,.jsonl,.txt,.log" onChange={e => onTraceFile(e.target.files?.[0])} />
+            <textarea
+              value={traceText}
+              onChange={e => setTraceText(e.target.value)}
+              placeholder="粘贴 trace JSON 或文本…"
+              rows={10}
+            />
+          </label>
+          <label className="upload-trace-label">
+            <span>Transcript（可选）</span>
+            <input type="file" accept=".txt,.md,.log,.json" onChange={e => onTranscriptFile(e.target.files?.[0])} />
+            <textarea
+              value={transcriptText}
+              onChange={e => setTranscriptText(e.target.value)}
+              placeholder="可选：上传或粘贴对应的 transcript 文本"
+              rows={6}
+            />
+          </label>
+          {error && <div className="upload-trace-error">{error}</div>}
+        </div>
+        <div className="upload-trace-foot">
+          <button className="btn-refresh" onClick={onClose} disabled={busy}>取消</button>
+          <button className="btn-refresh is-active" onClick={submit} disabled={busy}>
+            {busy ? '上传中…' : '上传并保存'}
+          </button>
+        </div>
       </div>
     </div>
   );

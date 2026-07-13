@@ -179,6 +179,33 @@ class DatasetStore:
 
                 CREATE INDEX IF NOT EXISTS idx_turn_evals_session_turn
                 ON turn_evals(session_id, turn_index, created_at DESC, id DESC);
+
+                CREATE TABLE IF NOT EXISTS eval_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    project_id TEXT,
+                    project_name TEXT,
+                    project_path TEXT,
+                    session_id TEXT,
+                    turn_index INTEGER,
+                    baseline_session_id TEXT,
+                    baseline_turn_index INTEGER,
+                    candidate_session_id TEXT,
+                    candidate_turn_index INTEGER,
+                    has_gold INTEGER NOT NULL DEFAULT 0,
+                    gold_hash TEXT,
+                    verdict TEXT,
+                    winner TEXT,
+                    summary_json TEXT NOT NULL DEFAULT '{}',
+                    target_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_eval_events_created
+                ON eval_events(created_at DESC, id DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_eval_events_type_project
+                ON eval_events(event_type, project_id, has_gold, created_at DESC);
                 """
             )
 
@@ -530,6 +557,93 @@ class DatasetStore:
                 if len(reports) >= limit:
                     break
             return reports
+
+    def save_eval_event(self, event: dict[str, Any]) -> int:
+        now = event.get("created_at") or utc_now()
+        summary = event.get("summary") if isinstance(event.get("summary"), dict) else {}
+        target = event.get("target") if isinstance(event.get("target"), dict) else {}
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO eval_events(
+                    created_at, event_type, project_id, project_name, project_path,
+                    session_id, turn_index, baseline_session_id, baseline_turn_index,
+                    candidate_session_id, candidate_turn_index, has_gold, gold_hash,
+                    verdict, winner, summary_json, target_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now,
+                    str(event.get("event_type") or "trace"),
+                    event.get("project_id"),
+                    event.get("project_name"),
+                    event.get("project_path"),
+                    event.get("session_id"),
+                    event.get("turn_index"),
+                    event.get("baseline_session_id"),
+                    event.get("baseline_turn_index"),
+                    event.get("candidate_session_id"),
+                    event.get("candidate_turn_index"),
+                    1 if event.get("has_gold") else 0,
+                    event.get("gold_hash"),
+                    event.get("verdict"),
+                    event.get("winner"),
+                    json.dumps(summary, ensure_ascii=False, default=str),
+                    json.dumps(target, ensure_ascii=False, default=str),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_eval_events(
+        self,
+        *,
+        limit: int = 100,
+        event_type: str | None = None,
+        project_id: str | None = None,
+        has_gold: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        if has_gold is not None:
+            clauses.append("has_gold = ?")
+            params.append(1 if has_gold else 0)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(int(limit or 100), 500)))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, created_at, event_type, project_id, project_name, project_path,
+                       session_id, turn_index, baseline_session_id, baseline_turn_index,
+                       candidate_session_id, candidate_turn_index, has_gold, gold_hash,
+                       verdict, winner, summary_json, target_json
+                FROM eval_events
+                {where}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["summary"] = json.loads(str(item.pop("summary_json") or "{}"))
+            except json.JSONDecodeError:
+                item["summary"] = {}
+            try:
+                item["target"] = json.loads(str(item.pop("target_json") or "{}"))
+            except json.JSONDecodeError:
+                item["target"] = {}
+            item["has_gold"] = bool(item.get("has_gold"))
+            events.append(item)
+        return events
 
 
 def _is_current_turn_eval_report(report: dict[str, Any]) -> bool:

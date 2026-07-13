@@ -13,16 +13,55 @@ interface Props {
   selectedNode: SelectedNode | null;
   onSelectNode: (node: SelectedNode) => void;
   onEvalTurn?: (turn: TurnCoT, cot: SessionCoT) => void;
+  onReferenceEvalTurn?: (turn: TurnCoT, cot: SessionCoT) => void;
   turnEvalReports?: Record<string, TurnEvalReport>;
   turnEvalLoadingKey?: string | null;
   liveCritic?: any | null;
   liveCriticTurns?: Record<string, any>;
+  abBaseline?: TurnRef | null;
+  abCandidate?: TurnRef | null;
 }
+
+type TurnRef = { session_id: string; turn_index: number };
+type AbTurnRole = 'baseline' | 'candidate' | 'both' | null;
 
 export type SelectedNode =
   | { kind: 'session'; cot: SessionCoT; session: SessionOverview | null; report: ResponseReport | null }
   | { kind: 'turn'; turn: TurnCoT; cot: SessionCoT }
   | { kind: 'step'; step: ThoughtStep; turn: TurnCoT };
+
+function sameTurnRef(ref: TurnRef | null | undefined, sessionId: string, turnIndex: number): boolean {
+  return !!ref && ref.session_id === sessionId && ref.turn_index === turnIndex;
+}
+
+function getAbTurnRole(
+  sessionId: string,
+  turnIndex: number,
+  baseline?: TurnRef | null,
+  candidate?: TurnRef | null,
+): AbTurnRole {
+  const isBaseline = sameTurnRef(baseline, sessionId, turnIndex);
+  const isCandidate = sameTurnRef(candidate, sessionId, turnIndex);
+  if (isBaseline && isCandidate) return 'both';
+  if (isBaseline) return 'baseline';
+  if (isCandidate) return 'candidate';
+  return null;
+}
+
+function AbTurnStamp({ role, compact = false }: { role: AbTurnRole; compact?: boolean }) {
+  if (!role) return null;
+  const label = role === 'baseline' ? 'BASE' : role === 'candidate' ? 'CANDIDATE' : 'BASE + CANDIDATE';
+  const title = role === 'baseline'
+    ? 'A/B baseline turn'
+    : role === 'candidate'
+      ? 'A/B candidate turn'
+      : 'This turn is both A/B baseline and candidate';
+  return (
+    <span className={`ab-turn-stamp ab-turn-stamp-${role} ${compact ? 'ab-turn-stamp-compact' : ''}`} title={title}>
+      {label}
+    </span>
+  );
+}
 
 // ─── v0.11.2 OTel inline 工具函数 ────────────────────────
 function fmtOtelCost(usd: number | null | undefined): string {
@@ -1297,10 +1336,11 @@ function augmentCotWithOtelOrphans(
 
 // ─── Turn 块（线性时序 + 工具嵌在 thinking 之下） ─────────
 function TurnNode({
-  turn, cot, selectedNode, onSelect,
+  turn, cot, selectedNode, onSelect, abRole,
 }: {
   turn: TurnCoT; cot: SessionCoT; selectedNode: SelectedNode | null;
   onSelect: (n: SelectedNode) => void;
+  abRole?: AbTurnRole;
 }) {
   const [expanded, setExpanded] = useState(true);
   const { icon, label, sub } = getTurnLabel(turn);
@@ -1578,6 +1618,7 @@ function TurnNode({
           {sub && <span className="tree-turn-sub">{sub}</span>}
         </div>
         <div className="tree-turn-badges">
+          <AbTurnStamp role={abRole ?? null} compact />
           {/* v0.17.2 (codebuddy)：本轮真实使用的 model 徽章 */}
           {turnModelBadge && (
             <span
@@ -2168,16 +2209,20 @@ function SubSessionDivider({
   turn,
   cot,
   onEvalTurn,
+  onReferenceEvalTurn,
   evalReport,
   isEvalLoading,
+  abRole,
 }: {
   turn: TurnCoT;
   cot: SessionCoT;
   onEvalTurn?: (turn: TurnCoT, cot: SessionCoT) => void;
+  onReferenceEvalTurn?: (turn: TurnCoT, cot: SessionCoT) => void;
   evalReport?: TurnEvalReport;
   isEvalLoading?: boolean;
   liveCritic?: any | null;
   liveCriticTurn?: any | null;
+  abRole?: AbTurnRole;
 }) {
   const reportStatus = String(
     evalReport?.judge?.status
@@ -2247,6 +2292,7 @@ function SubSessionDivider({
       <div className="tree-subsession-chip">
         <span className="tree-subsession-index">#{turn.turn_index}</span>
         <span className="tree-subsession-topic">💬 {topic}</span>
+        <AbTurnStamp role={abRole ?? null} />
         <button
           type="button"
           className={`tree-subsession-eval tree-subsession-eval-${evalState} ${evalReport && evalState === 'done' ? 'tree-subsession-eval-done' : ''}`}
@@ -2260,6 +2306,17 @@ function SubSessionDivider({
         >
           <span className="tree-subsession-quality-dot" style={{ background: color }} />
           {evalLabel}
+        </button>
+        <button
+          type="button"
+          className="tree-subsession-reference"
+          title="为这条 trace 上传标准答案"
+          onClick={(e) => {
+            e.stopPropagation();
+            onReferenceEvalTurn?.(turn, cot);
+          }}
+        >
+          Gold
         </button>
         {planCount > 0 && (
           <span className="tree-subsession-plan" title={`本轮更新 plan ${planCount} 次`}>
@@ -2299,10 +2356,13 @@ export default function SpanTree({
   selectedNode,
   onSelectNode,
   onEvalTurn,
+  onReferenceEvalTurn,
   turnEvalReports = {},
   turnEvalLoadingKey,
   liveCritic,
   liveCriticTurns = {},
+  abBaseline,
+  abCandidate,
 }: Props) {
   const isSessionSelected = selectedNode?.kind === 'session';
 
@@ -2607,25 +2667,31 @@ export default function SpanTree({
 
       {/* 子会话流：每个 turn = 一次 user→AI 交互。每个 turn 前面都放一条醒目分隔带。 */}
       <div className="tree-turns-list">
-        {cot.turns.map((turn, idx) => (
-          <div key={turn.turn_index} className="tree-subsession-wrap" data-first={idx === 0}>
-            <SubSessionDivider
-              turn={turn}
-              cot={cot}
-              onEvalTurn={onEvalTurn}
-              evalReport={turnEvalReports[`${cot.session_id}:${turn.turn_index}`]}
-              isEvalLoading={turnEvalLoadingKey === `${cot.session_id}:${turn.turn_index}`}
-              liveCritic={liveCritic}
-              liveCriticTurn={liveCriticTurns[`${cot.session_id}:${turn.turn_index}`]}
-            />
-            <TurnNode
-              turn={turn}
-              cot={cot}
-              selectedNode={selectedNode}
-              onSelect={onSelectNode}
-            />
-          </div>
-        ))}
+        {cot.turns.map((turn, idx) => {
+          const abRole = getAbTurnRole(cot.session_id, turn.turn_index, abBaseline, abCandidate);
+          return (
+            <div key={turn.turn_index} className="tree-subsession-wrap" data-first={idx === 0}>
+              <SubSessionDivider
+                turn={turn}
+                cot={cot}
+                onEvalTurn={onEvalTurn}
+                onReferenceEvalTurn={onReferenceEvalTurn}
+                evalReport={turnEvalReports[`${cot.session_id}:${turn.turn_index}`]}
+                isEvalLoading={turnEvalLoadingKey === `${cot.session_id}:${turn.turn_index}`}
+                liveCritic={liveCritic}
+                liveCriticTurn={liveCriticTurns[`${cot.session_id}:${turn.turn_index}`]}
+                abRole={abRole}
+              />
+              <TurnNode
+                turn={turn}
+                cot={cot}
+                selectedNode={selectedNode}
+                onSelect={onSelectNode}
+                abRole={abRole}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

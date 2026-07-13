@@ -5,10 +5,21 @@ __pycache__/
 .ruff_cache/
 .tmp*/
 build/
-dist/
+
+# dist: only keep the final release exe (0.1.71); ignore everything else there
+dist/*
+!dist/agent-quality-eval-0.1.71.exe
+
 *.spec.bak
 results/
 src/agent_quality_eval/templates/results/
 *.db
 *.sqlite
 *.log
+
+# Local backup snapshots of the frontend
+frontend.previous-*/
+
+# Local scratch/staging files kept at the repo root (wiki drafts, batch
+# extracts, one-off scripts, etc.) — never meant to be checked in.
+/_*
