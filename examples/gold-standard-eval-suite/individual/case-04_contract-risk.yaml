@@ -1,0 +1,26 @@
+name: gold-contract-risk
+version: v1
+cases:
+  - id: contract-risk-memo
+    title: Vendor Contract Risk Memo
+    question: |
+      Write a buyer-side risk memo for the fictional vendor clause.
+    expected_answer: |
+      The memo should rank these five risks and provide negotiation positions:
+
+      1. Uncontrolled subprocessors. This matters because Vendor can choose subprocessors at sole discretion, creating data transfer, security, and compliance risk. Redline: prior notice, objection right, subprocessor list, flow-down obligations, and vendor liability for subprocessor acts.
+      2. Overbroad de-identified data use. This matters because "any Vendor product or service" is broader than improving the contracted service. Redline: limit to aggregated/de-identified data for maintaining and improving the contracted service, prohibit re-identification and customer-identifiable outputs.
+      3. Very low liability cap. One month of fees may be inadequate for data breach, confidentiality breach, IP infringement, or gross misconduct. Redline: 12-month general cap plus higher or uncapped carve-outs.
+      4. Weak availability and sole service-credit remedy. "Commercially reasonable efforts" is vague and credits may not compensate business interruption. Redline: measurable SLA, uptime target, support response, termination right for chronic failure, and preserve remedies for material breach.
+      5. Termination for convenience on 10 days' notice. This threatens continuity and migration. Redline: longer notice, transition assistance, data export, refund of prepaid unused fees, and survival of return/deletion obligations.
+
+      Final recommendation: do not accept as written for a material SaaS vendor handling Customer Data. Accept only after tightening subprocessors, data use, availability, liability, and termination assistance. Do not invent governing law or say the clause is illegal.
+    rubric: Must include ranked risks, why each matters, concrete redline or negotiation positions, and final recommendation.
+    keywords: ["subprocessors", "de-identified", "liability cap", "service credit", "termination", "transition assistance"]
+    assertions:
+      - type: keywords
+        value: ["subprocessors", "de-identified", "liability", "service credit", "termination"]
+        all_required: true
+      - type: not-contains
+        value: "illegal"
+

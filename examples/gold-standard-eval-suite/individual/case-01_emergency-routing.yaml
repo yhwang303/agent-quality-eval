@@ -1,0 +1,39 @@
+name: gold-emergency-routing
+version: v1
+cases:
+  - id: emergency-routing
+    title: Emergency Supply Routing
+    question: |
+      Plan a 24-hour emergency supply dispatch for the fictional typhoon scenario.
+    expected_answer: |
+      Demand:
+      - North Pier water: 1,200 x 2 = 2,400 packs = 2,400 kg.
+      - North Pier medical kits: ceil(1,200 / 20) = 60 kits = 120 kg.
+      - East Hill medical kits: ceil(800 / 20) = 40 kits = 80 kg.
+      - South Flats water: 1,500 x 2 = 3,000 packs = 3,000 kg.
+      - South Flats food: 1,500 x 0.8 = 1,200 kg.
+      - South Flats blankets: ceil(1,500 / 3) = 500 blankets x 1.2 = 600 kg.
+
+      Capacity:
+      - Trucks: 2 x 3 x 600 kg = 3,600 kg.
+      - Helicopter: 1 x 4 x 180 kg = 720 kg.
+      - Total = 4,320 kg, so full demand cannot be met.
+
+      One acceptable dispatch:
+      - Helicopter trip 1: East Hill 40 medical kits = 80 kg plus 100 water packs = 100 kg.
+      - Helicopter trips 2-4: East Hill 180 water packs per trip.
+      - Helicopter total: East Hill gets 40 medical kits and 640 water packs.
+      - Truck A trips 1-3: North Pier 1,800 water packs.
+      - Truck B trip 1: North Pier 60 medical kits plus 480 water packs.
+      - Truck B trips 2-3: South Flats 1,200 water packs.
+
+      Remaining capacity is 0 kg. Unmet demand must be stated: North Pier lacks 120 water packs; East Hill still lacks water if covering the second half of the day; South Flats lacks 1,800 water packs, all food, and all blankets. The plan is a triage plan and should recommend more transport or a second-day resupply.
+    rubric: Must show arithmetic, constraints, vehicle assignment, remaining capacity, unmet demand, and triage reasoning.
+    keywords: ["4,320", "helicopter", "East Hill", "unmet", "North Pier", "South Flats", "triage"]
+    assertions:
+      - type: keywords
+        value: ["4,320", "East Hill", "helicopter", "unmet", "North Pier", "South Flats"]
+        all_required: true
+      - type: not-contains
+        value: "all demand is fully met"
+

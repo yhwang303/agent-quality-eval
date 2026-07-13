@@ -1193,14 +1193,94 @@ function TurnEvalReportCard({
             {liveSupervisor && <LiveCriticCard liveCritic={liveSupervisor} />}
             {criticSummary && <div className="dp-critic-summary-box">{criticSummary}</div>}
             {judgeReview ? (
-              <div className="dp-judge-review-box"><JudgeReviewMarkdown text={judgeReview} /></div>
+              <div className="dp-judge-review-box">
+                <JudgeReviewMarkdown
+                  text={judgeReview}
+                  evidenceByDimension={collectCriticEvidence(judgeStructured)}
+                />
+              </div>
             ) : report.judge.status !== 'completed' ? (
               <div className="dp-eval-sub">{report.judge.reason}</div>
             ) : null}
+            <CriticClaimsCard claims={(judgeStructured as any)?.claims} />
           </div>
         )}
       </div>
     </Section>
+  );
+}
+
+const CRITIC_EVIDENCE_DIMENSIONS: Array<{ key: string; label: string }> = [
+  { key: 'task_completion', label: '任务完成' },
+  { key: 'tool_use', label: '工具使用' },
+  { key: 'reasoning', label: '推理路径' },
+  { key: 'instruction_following', label: '指令遵循' },
+  { key: 'faithfulness', label: '忠实度' },
+  { key: 'efficiency', label: '效率' },
+  { key: 'reliability', label: '可靠性' },
+];
+
+type CriticEvidence = { ref?: string; quote?: string; source?: string };
+
+function collectCriticEvidence(structured: any): Map<string, CriticEvidence[]> {
+  const out = new Map<string, CriticEvidence[]>();
+  if (!structured || typeof structured !== 'object') return out;
+  for (const { key, label } of CRITIC_EVIDENCE_DIMENSIONS) {
+    const dim = structured[key];
+    if (!dim || typeof dim !== 'object') continue;
+    const ev = Array.isArray(dim.evidence)
+      ? (dim.evidence as CriticEvidence[]).filter((e: any) => e && (e.ref || e.quote))
+      : [];
+    if (!ev.length) continue;
+    out.set(label, ev.slice(0, 6));
+  }
+  return out;
+}
+
+function CriticClaimsCard({ claims }: { claims: any }) {
+  if (!Array.isArray(claims) || !claims.length) return null;
+  const verifiedLabel = (v: unknown): { label: string; tone: string } => {
+    if (v === true) return { label: '已验证', tone: 'ok' };
+    if (v === false) return { label: '反例', tone: 'fail' };
+    return { label: '未确证', tone: 'unknown' };
+  };
+  const typeLabel = (t: unknown) => {
+    const text = String(t || '').toLowerCase();
+    if (text === 'factual') return '事实';
+    if (text === 'process') return '流程';
+    if (text === 'quality') return '质量';
+    return '其他';
+  };
+  return (
+    <details className="dp-critic-claims" open>
+      <summary>Agent 声称核对（共 {claims.length} 条）</summary>
+      <div className="dp-critic-claims-list">
+        {claims.slice(0, 12).map((c: any, idx: number) => {
+          const v = verifiedLabel(c?.verified);
+          const evidence = Array.isArray(c?.evidence) ? c.evidence.filter((e: any) => e && (e.ref || e.quote)) : [];
+          return (
+            <div className={`dp-critic-claim is-${v.tone}`} key={idx}>
+              <div className="dp-critic-claim-head">
+                <span className="dp-critic-claim-type">{typeLabel(c?.type)}</span>
+                <span className={`dp-critic-claim-verdict is-${v.tone}`}>{v.label}</span>
+              </div>
+              <div className="dp-critic-claim-text">{c?.claim || ''}</div>
+              {evidence.length > 0 && (
+                <div className="dp-critic-claim-evidence">
+                  {evidence.slice(0, 3).map((e: any, eidx: number) => (
+                    <div className="dp-critic-evidence-item" key={eidx}>
+                      {e.ref && <code className="dp-critic-evidence-ref">{e.ref}</code>}
+                      {e.source && <span className="dp-critic-evidence-source">{e.source}</span>}
+                      {e.quote && <span className="dp-critic-evidence-quote">{e.quote}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
@@ -1322,7 +1402,13 @@ function buildEvalProvenance(report: TurnEvalReport, liveSupervisor: any, turn?:
 //   * 时间戳为 0 = transcript 推断的事件（如 permissionMode）—— 标 "transcript"
 // ═══════════════════════════════════════════════════════════
 
-function JudgeReviewMarkdown({ text }: { text: string }) {
+function JudgeReviewMarkdown({
+  text,
+  evidenceByDimension,
+}: {
+  text: string;
+  evidenceByDimension?: Map<string, CriticEvidence[]>;
+}) {
   const renderInline = (line: string) => {
     const nodes: ReactNode[] = [];
     let cursor = 0;
@@ -1337,46 +1423,92 @@ function JudgeReviewMarkdown({ text }: { text: string }) {
     return nodes.length ? nodes : line;
   };
 
-  return (
-    <>
-      {String(text || '').split(/\r?\n/).map((line, idx) => {
-        const trimmed = line.trim();
-        if (!trimmed) return <div className="dp-judge-md-gap" key={`gap-${idx}`} />;
-        const heading = trimmed.match(/^#{1,6}\s+(.+)$/);
-        if (heading) {
-          return (
-            <div className="dp-judge-md-heading" key={idx}>
-              {renderInline(heading[1].trim())}
-            </div>
-          );
-        }
-        const bullet = trimmed.match(/^[-*]\s+(.+)$/);
-        if (bullet) {
-          return (
-            <div className="dp-judge-md-bullet" key={idx}>
-              <span />
-              <p>{renderInline(bullet[1])}</p>
-            </div>
-          );
-        }
-        const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
-        if (ordered) {
-          return (
-            <div className="dp-judge-md-bullet" key={idx}>
-              <span />
-              <p>{renderInline(ordered[1])}</p>
-            </div>
-          );
-        }
-        const isHeading = /^\*\*.+?\*\*/.test(trimmed);
-        return (
-          <div className={isHeading ? 'dp-judge-md-heading' : 'dp-judge-md-line'} key={idx}>
-            {renderInline(trimmed)}
-          </div>
+  // Extract the dimension label from a heading like "**任务完成** · partial".
+  // We match against the full prefix between the first pair of ** so the label
+  // never accidentally includes the verdict suffix.
+  const headingLabel = (line: string): string | null => {
+    const match = line.match(/^\*\*(.+?)\*\*/);
+    return match ? match[1].trim() : null;
+  };
+
+  const lines = String(text || '').split(/\r?\n/);
+  const nodes: ReactNode[] = [];
+  let lastHeadingLabel: string | null = null;
+  let blockBuffer: ReactNode[] = [];
+  let blockKey = 0;
+
+  const flushBlock = () => {
+    if (blockBuffer.length) {
+      nodes.push(<div className="dp-judge-md-block" key={`block-${blockKey++}`}>{blockBuffer}</div>);
+      blockBuffer = [];
+    }
+    if (lastHeadingLabel && evidenceByDimension?.has(lastHeadingLabel)) {
+      const ev = evidenceByDimension.get(lastHeadingLabel) || [];
+      if (ev.length) {
+        nodes.push(
+          <div className="dp-judge-md-evidence" key={`ev-${blockKey++}`}>
+            {ev.map((e, idx) => (
+              <div className="dp-critic-evidence-item" key={idx}>
+                {e.ref && <code className="dp-critic-evidence-ref">{e.ref}</code>}
+                {e.source && <span className="dp-critic-evidence-source">{e.source}</span>}
+                {e.quote && <span className="dp-critic-evidence-quote">{e.quote}</span>}
+              </div>
+            ))}
+          </div>,
         );
-      })}
-    </>
-  );
+      }
+    }
+    lastHeadingLabel = null;
+  };
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const trimmed = lines[idx].trim();
+    if (!trimmed) {
+      blockBuffer.push(<div className="dp-judge-md-gap" key={`gap-${idx}`} />);
+      continue;
+    }
+    const heading = trimmed.match(/^#{1,6}\s+(.+)$/);
+    const isMdHeading = !!heading;
+    const isStrongHeading = !isMdHeading && /^\*\*.+?\*\*/.test(trimmed);
+    if (isMdHeading || isStrongHeading) {
+      flushBlock();
+      lastHeadingLabel = isMdHeading ? heading![1].trim().replace(/^\*\*|\*\*$/g, '') : headingLabel(trimmed);
+      blockBuffer.push(
+        <div className="dp-judge-md-heading" key={idx}>
+          {renderInline(isMdHeading ? heading![1].trim() : trimmed)}
+        </div>,
+      );
+      continue;
+    }
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      blockBuffer.push(
+        <div className="dp-judge-md-bullet" key={idx}>
+          <span />
+          <p>{renderInline(bullet[1])}</p>
+        </div>,
+      );
+      continue;
+    }
+    const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
+    if (ordered) {
+      blockBuffer.push(
+        <div className="dp-judge-md-bullet" key={idx}>
+          <span />
+          <p>{renderInline(ordered[1])}</p>
+        </div>,
+      );
+      continue;
+    }
+    blockBuffer.push(
+      <div className="dp-judge-md-line" key={idx}>
+        {renderInline(trimmed)}
+      </div>,
+    );
+  }
+  flushBlock();
+
+  return <>{nodes}</>;
 }
 
 function _fmtHookTime(t_ms?: number): string {

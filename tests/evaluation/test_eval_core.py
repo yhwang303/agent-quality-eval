@@ -9,6 +9,7 @@ from agent_quality_eval.cli import bootstrap_workspace
 from agent_quality_eval.evaluation.cbm_dataset import build_cbm_real_dataset
 from agent_quality_eval.evaluation.compare import compare_experiments
 from agent_quality_eval.evaluation.config import load_eval_config, write_default_config
+from agent_quality_eval.evaluation.critic import CRITIC_REPORT_SCHEMA_VERSION
 from agent_quality_eval.evaluation.runner import run_eval
 from agent_quality_eval.evaluation.session_eval import (
     build_session_eval_report,
@@ -267,7 +268,7 @@ def test_turn_eval_ingests_agent_critic_report(tmp_path, monkeypatch):
     path.write_text(
         json.dumps(
             {
-                "schema_version": "agent-critic-v1",
+                "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
                 "eval_method": "agent_critic_v1",
                 "status": "completed",
                 "session_id": "codex-test",

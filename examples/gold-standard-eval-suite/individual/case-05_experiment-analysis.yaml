@@ -1,0 +1,35 @@
+name: gold-experiment-analysis
+version: v1
+cases:
+  - id: experiment-analysis
+    title: Experiment Analysis
+    question: |
+      Analyze the onboarding checklist experiment and give a launch recommendation.
+    expected_answer: |
+      Calculations:
+      - Control activation rate = 3,000 / 12,000 = 25.00%.
+      - Treatment activation rate = 3,186 / 11,800 = 27.00%.
+      - Absolute lift = 27.00% - 25.00% = 2.00 percentage points.
+      - Relative lift = 2.00 / 25.00 = 8.00%.
+      - Median time to activation improved from 44 hours to 39 hours, a 5-hour reduction.
+      - Support tickets increased from 28 to 35 per 1,000 users, an increase of 7 per 1,000 or 25%.
+
+      Recommendation:
+      - Recommend limited or staged rollout, not unconditional full launch.
+      - Activation and speed improved, but support-ticket burden increased materially.
+
+      Follow-up checks:
+      - Statistical confidence/significance and confidence intervals.
+      - Segment by user type, country, channel, or acquisition source.
+      - Inspect support ticket categories for checklist confusion.
+      - Measure downstream retention, paid conversion, or churn.
+      - Confirm instrumentation did not change.
+    rubric: Must compute rates and lifts correctly, include support-ticket downside, and give a cautious recommendation.
+    keywords: ["25.00%", "27.00%", "2.00 percentage points", "8.00%", "5-hour", "25%"]
+    assertions:
+      - type: keywords
+        value: ["25.00%", "27.00%", "2.00", "8.00", "5-hour", "25%"]
+        all_required: true
+      - type: not-contains
+        value: "unconditional full launch"
+

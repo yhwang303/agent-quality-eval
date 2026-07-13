@@ -1,8 +1,14 @@
 import json
 from typing import Any
 
-from agent_quality_eval.evaluation.api import _AB_LLM_COMPARE_CACHE, _compare_turn_reports
+from agent_quality_eval.evaluation.api import (
+    _AB_LLM_COMPARE_CACHE,
+    _REGRESSION_LLM_COMPARE_CACHE,
+    _compare_turn_reports,
+    _record_compare_eval_event,
+)
 from agent_quality_eval.evaluation.models import PerformanceMetrics, ProviderResponse
+from agent_quality_eval.evaluation.store import DatasetStore
 
 
 class _Settings:
@@ -34,7 +40,16 @@ class _Provider:
         )
 
 
-def _report(session_id: str, *, passed: bool, score: float, tokens: int = 100, tools: int = 1) -> dict[str, Any]:
+def _report(
+    session_id: str,
+    *,
+    passed: bool,
+    score: float,
+    tokens: int = 100,
+    tools: int = 1,
+    severity: str = "high",
+    category: str = "task_outcome",
+) -> dict[str, Any]:
     return {
         "session_id": session_id,
         "turn_index": 0,
@@ -54,8 +69,8 @@ def _report(session_id: str, *, passed: bool, score: float, tokens: int = 100, t
             {
                 "key": "task-complete",
                 "label_zh": "任务完成",
-                "category": "task_outcome",
-                "severity": "high",
+                "category": category,
+                "severity": severity,
                 "passed": passed,
                 "score": score,
                 "reason": "done" if passed else "missing",
@@ -303,3 +318,184 @@ def test_turn_compare_invalid_json_and_missing_source_are_non_fatal(monkeypatch)
         candidate_context=_context("cand"),
     )
     assert missing["llm_compare"]["status"] == "error"
+
+
+def _regression_completed_json(verdict: str = "PASS") -> str:
+    data: dict[str, Any] = {
+        "gate_verdict": verdict,
+        "summary_conclusion": f"回归检测结论：{verdict}。candidate 保持了 baseline 的核心能力。",
+        "blocking_reasons": [] if verdict != "FAIL" else ["Candidate broke a baseline capability."],
+        "warning_reasons": [] if verdict == "PASS" else ["需要人工复核。"],
+        "preserved_capabilities": ["Task completion capability is preserved."],
+        "new_regressions": [] if verdict == "PASS" else ["New candidate regression."],
+        "manual_review_notes": ["复核断言差异。"],
+    }
+    for key in (
+        "capability_preservation",
+        "user_goal_coverage",
+        "behavioral_change_risk",
+        "evidence_faithfulness",
+        "workflow_integrity",
+        "efficiency_regression",
+    ):
+        data[key] = {"verdict": "preserved", "review": f"{key} is supported by the eval evidence."}
+    return json.dumps(data, ensure_ascii=False)
+
+
+def test_regression_mode_uses_regression_judge_not_ab_judge(monkeypatch):
+    import agent_quality_eval.evaluation.api as api_module
+    import agent_quality_eval.evaluation.providers as providers
+    import agent_quality_eval.evaluation.settings as settings
+
+    _REGRESSION_LLM_COMPARE_CACHE.clear()
+    provider = _Provider(_regression_completed_json("PASS"))
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
+    monkeypatch.setattr(providers, "load_provider", lambda config: provider)
+
+    def fail_ab(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("standard A/B judge should not run in regression mode")
+
+    monkeypatch.setattr(api_module, "_run_ab_llm_compare", fail_ab)
+
+    result = _compare_turn_reports(
+        _report("base-reg", passed=True, score=1.0),
+        _report("cand-reg", passed=True, score=1.0),
+        baseline_context=_context("base-reg"),
+        candidate_context=_context("cand-reg"),
+        mode="regression",
+    )
+
+    assert result["compare_mode"] == "regression"
+    assert "llm_compare" not in result
+    assert result["regression_gate"]["verdict"] == "PASS"
+    assert result["regression_compare"]["status"] == "completed"
+    assert "Agent 回归检测评审器" in provider.calls[0]
+    _REGRESSION_LLM_COMPARE_CACHE.clear()
+
+
+def test_regression_mode_critical_decline_fails_without_llm(monkeypatch):
+    import agent_quality_eval.evaluation.settings as settings
+
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings(enabled=False))
+
+    result = _compare_turn_reports(
+        _report("base-critical", passed=True, score=1.0, severity="critical"),
+        _report("cand-critical", passed=False, score=0.0, severity="critical"),
+        mode="regression",
+    )
+
+    assert result["regression_gate"]["verdict"] == "FAIL"
+    assert result["regression_gate"]["critical_regressions"]
+    assert result["regression_compare"]["status"] == "disabled"
+
+
+def test_regression_mode_medium_decline_warns(monkeypatch):
+    import agent_quality_eval.evaluation.settings as settings
+
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings(enabled=False))
+
+    result = _compare_turn_reports(
+        _report("base-medium", passed=True, score=1.0, severity="medium", category="workflow_integrity"),
+        _report("cand-medium", passed=False, score=0.95, severity="medium", category="workflow_integrity"),
+        mode="regression",
+    )
+
+    assert result["regression_gate"]["verdict"] == "WARN"
+    assert result["regression_gate"]["new_failed_assertions"]
+
+
+def test_regression_mode_task_outcome_decline_fails(monkeypatch):
+    import agent_quality_eval.evaluation.settings as settings
+
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings(enabled=False))
+
+    result = _compare_turn_reports(
+        _report("base-outcome", passed=True, score=1.0, severity="high", category="task_outcome"),
+        _report("cand-outcome", passed=False, score=0.8, severity="high", category="task_outcome"),
+        mode="regression",
+    )
+
+    assert result["regression_gate"]["verdict"] == "FAIL"
+    assert result["regression_gate"]["task_outcome_regressions"]
+
+
+def test_regression_mode_passes_when_assertions_are_preserved(monkeypatch):
+    import agent_quality_eval.evaluation.settings as settings
+
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings(enabled=False))
+
+    result = _compare_turn_reports(
+        _report("base-pass", passed=True, score=1.0),
+        _report("cand-pass", passed=True, score=1.0),
+        mode="regression",
+    )
+
+    assert result["regression_gate"]["verdict"] == "PASS"
+    assert result["regression_gate"]["preserved_passed_assertions"] == 1
+    assert result["regression_compare"]["gate_verdict"] == "PASS"
+
+
+def test_eval_log_records_ab_conclusion_metadata(tmp_path, monkeypatch):
+    import agent_quality_eval.evaluation.providers as providers
+    import agent_quality_eval.evaluation.settings as settings
+
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
+    monkeypatch.setattr(providers, "load_provider", lambda config: _Provider(_completed_json()))
+    result = _compare_turn_reports(
+        _report("base-log", passed=False, score=0.0),
+        _report("cand-log", passed=True, score=1.0),
+        baseline_context=_context("base-log"),
+        candidate_context=_context("cand-log"),
+    )
+    store = DatasetStore(tmp_path / "eval.db")
+
+    _record_compare_eval_event(
+        store,
+        result,
+        baseline_context=_context("base-log"),
+        candidate_context=_context("cand-log"),
+        reference_answer=None,
+    )
+
+    events = store.list_eval_events(event_type="ab")
+    assert len(events) == 1
+    assert events[0]["winner"] == "candidate"
+    assert events[0]["summary"]["comparison_verdict"] == "candidate_better"
+    assert events[0]["summary"]["baseline"]["session_id"] == "base-log"
+    assert events[0]["summary"]["candidate"]["session_id"] == "cand-log"
+    assert "quality_delta" in events[0]["summary"]
+
+
+def test_eval_log_records_regression_gate_and_gold_metadata(tmp_path, monkeypatch):
+    import agent_quality_eval.evaluation.settings as settings
+
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings(enabled=False))
+    reference_answer = {
+        "standard_answer": "done",
+        "process_requirements": {"required_tools": ["shell"]},
+    }
+    result = _compare_turn_reports(
+        _report("base-reg-log", passed=True, score=1.0, severity="critical"),
+        _report("cand-reg-log", passed=False, score=0.0, severity="critical"),
+        baseline_context=_context("base-reg-log"),
+        candidate_context=_context("cand-reg-log"),
+        mode="regression",
+        reference_answer=reference_answer,
+    )
+    store = DatasetStore(tmp_path / "eval.db")
+
+    _record_compare_eval_event(
+        store,
+        result,
+        baseline_context=_context("base-reg-log"),
+        candidate_context=_context("cand-reg-log"),
+        reference_answer=reference_answer,
+    )
+
+    events = store.list_eval_events(event_type="regression", has_gold=True)
+    assert len(events) == 1
+    assert events[0]["verdict"] == "FAIL"
+    assert events[0]["gold_hash"]
+    assert events[0]["summary"]["gate_verdict"] == "FAIL"
+    assert events[0]["summary"]["has_regression"] is True
+    assert events[0]["summary"]["blocking_reasons"]

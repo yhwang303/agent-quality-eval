@@ -1,0 +1,45 @@
+name: gold-privacy-incident
+version: v1
+cases:
+  - id: privacy-incident-response
+    title: Privacy Incident Response
+    question: |
+      Classify the fictional privacy incident and propose containment, investigation, communications, and prevention steps.
+    expected_answer: |
+      Severity should be moderate or medium-high. It is not negligible because 4,200 customer rows, email addresses, free-text ticket bodies, contractors, and 11 confirmed downloads are involved. It is not automatically maximum severity because there are no passwords, payment cards, government IDs, or auth tokens, and distribution was internal with archive deletion after 90 minutes.
+
+      First 24 hours:
+      - Preserve export job logs, mailing list recipients, message headers, download logs, and deletion timestamp.
+      - Confirm deletion, request written deletion confirmation from all 40 recipients, and focus on the 11 downloaders.
+      - Pause similar exports and restrict the pipeline.
+      - Notify privacy, security, legal, and incident owners.
+      - Check contractor confidentiality and data processing obligations.
+
+      Investigation:
+      - Why did the export include free-text body and email?
+      - Was the mailing list intended?
+      - Were any recipients external?
+      - Did downloaded copies move to unmanaged devices or cloud drives?
+      - What ticket content categories are in scope?
+      - Is this one-time or recurring?
+
+      Communications:
+      - Legal/privacy should decide regulator or customer notification based on jurisdiction, sensitivity, contractual duties, and evidence of further disclosure.
+      - Do not claim a specific statutory notification deadline because no jurisdiction is provided.
+
+      Prevention:
+      - Data minimization and column allowlists.
+      - DLP scanning for emails and sensitive free text.
+      - Approval workflow for broad mailing lists.
+      - Expiring/watermarked exports.
+      - Recipient access review and contractor segmentation.
+      - Tests and monitoring for export schema changes.
+    rubric: Must classify severity, include first-day containment, investigation questions, communication considerations, prevention, and avoid invented legal deadlines.
+    keywords: ["moderate", "4,200", "free-text", "11", "no specific statutory deadline", "DLP"]
+    assertions:
+      - type: keywords
+        value: ["moderate", "4,200", "free-text", "11", "DLP"]
+        all_required: true
+      - type: not-contains
+        value: "72 hours"
+

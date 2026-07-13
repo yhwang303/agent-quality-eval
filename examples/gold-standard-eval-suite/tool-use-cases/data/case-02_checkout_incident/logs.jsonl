@@ -1,0 +1,12 @@
+{"ts":"2026-06-29T10:34:18Z","service":"checkout-api","level":"info","event":"checkout_completed","region":"CA","sku":"SKU-77","tax_cache_key":"tax:CA:SKU-77","tax_rate":0.0825,"request_id":"req-001"}
+{"ts":"2026-06-29T10:43:04Z","service":"checkout-api","level":"info","event":"deploy_seen","version":"v2026.06.29-2","request_id":"deploy-2"}
+{"ts":"2026-06-29T10:46:22Z","service":"checkout-api","level":"warn","event":"tax_cache_write","region":"OR","sku":"SKU-77","tax_cache_key":"tax:SKU-77","tax_rate":0.0000,"ttl_seconds":3600,"request_id":"req-017"}
+{"ts":"2026-06-29T10:49:51Z","service":"checkout-api","level":"error","event":"checkout_failed","code":"TAX_RATE_MISMATCH","region":"CA","sku":"SKU-77","expected_tax_rate":0.0825,"cached_tax_rate":0.0000,"tax_cache_key":"tax:SKU-77","request_id":"req-023"}
+{"ts":"2026-06-29T10:58:10Z","service":"checkout-api","level":"error","event":"checkout_failed","code":"TAX_RATE_MISMATCH","region":"NY","sku":"SKU-77","expected_tax_rate":0.08875,"cached_tax_rate":0.0000,"tax_cache_key":"tax:SKU-77","request_id":"req-041"}
+{"ts":"2026-06-29T11:07:32Z","service":"checkout-api","level":"warn","event":"tax_cache_write","region":"CA","sku":"SKU-19","tax_cache_key":"tax:SKU-19","tax_rate":0.0825,"ttl_seconds":3600,"request_id":"req-083"}
+{"ts":"2026-06-29T11:09:45Z","service":"checkout-api","level":"error","event":"checkout_failed","code":"TAX_RATE_MISMATCH","region":"WA","sku":"SKU-19","expected_tax_rate":0.0650,"cached_tax_rate":0.0825,"tax_cache_key":"tax:SKU-19","request_id":"req-088"}
+{"ts":"2026-06-29T11:16:20Z","service":"payments-api","level":"info","event":"retry_logging_enabled","version":"v2026.06.29-1","request_id":"pay-001"}
+{"ts":"2026-06-29T11:25:01Z","service":"checkout-api","level":"error","event":"checkout_failed","code":"TAX_RATE_MISMATCH","region":"TX","sku":"SKU-77","expected_tax_rate":0.0625,"cached_tax_rate":0.0000,"tax_cache_key":"tax:SKU-77","request_id":"req-121"}
+{"ts":"2026-06-29T11:51:44Z","service":"checkout-api","level":"error","event":"checkout_failed","code":"TAX_RATE_MISMATCH","region":"CA","sku":"SKU-19","expected_tax_rate":0.0825,"cached_tax_rate":0.0650,"tax_cache_key":"tax:SKU-19","request_id":"req-188"}
+{"ts":"2026-06-29T12:06:12Z","service":"checkout-api","level":"info","event":"deploy_seen","version":"v2026.06.29-1","request_id":"rollback-1"}
+{"ts":"2026-06-29T12:14:09Z","service":"checkout-api","level":"info","event":"checkout_completed","region":"CA","sku":"SKU-77","tax_cache_key":"tax:CA:SKU-77","tax_rate":0.0825,"request_id":"req-230"}

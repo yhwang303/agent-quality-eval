@@ -45,16 +45,16 @@ flowchart LR
 - Added a redesigned `/eval` local workbench for trace-linked session eval, token/cost/latency/tool/error metrics, eval pipeline runs, A/B compare, regression gates, baseline promotion, and experiment browsing.
 - Added persisted `session_evals` reports so every observed session can generate and retain an eval report.
 - Added an Eval entry button to the bundled observation SPA so users can move from observation to evaluation without remembering routes.
-- Added PyInstaller spec for `agent-quality-eval-0.1.0.exe`; no-argument launch bootstraps local state and opens the Eval workbench, command arguments run the CLI.
+- Added PyInstaller spec for `agent-quality-eval-<version>.exe`; no-argument launch bootstraps local state and opens the Eval workbench, command arguments run the CLI.
 - Product startup now clears stale observation backend paths from older frozen installs so the exe uses its bundled backend/frontend.
 - Added regression tests covering the blocking regression path.
-- Built the Windows executable at `D:\agent-quality-eval\dist\agent-quality-eval-0.1.0.exe`.
+- Latest shipped Windows executable: `D:\agent-quality-eval\dist\agent-quality-eval-0.1.71.exe` (the only exe kept under version control).
 
 ## Verification
 
 - `py -m pytest -q` passes.
-- `dist\agent-quality-eval-0.1.0.exe doctor` exits `0` and reports `agent_cot 1.0.15`.
-- `dist\agent-quality-eval-0.1.0.exe eval run ...sample_eval.yaml` writes SQLite records plus JSON/HTML reports and exits `0`.
+- `dist\agent-quality-eval-0.1.71.exe doctor` exits `0` and reports `agent_cot 1.0.15`.
+- `dist\agent-quality-eval-0.1.71.exe eval run ...sample_eval.yaml` writes SQLite records plus JSON/HTML reports and exits `0`.
 - A deliberately degraded candidate triggers `eval regression` failure and exits `1`.
 - `http://127.0.0.1:<port>/eval` serves the local Eval workbench and can run an eval from the browser.
 - Observed sessions can be evaluated from the browser and persist reports with total/input/output/cache tokens, cost, latency, tool count, LLM call count, error count, and score breakdown.

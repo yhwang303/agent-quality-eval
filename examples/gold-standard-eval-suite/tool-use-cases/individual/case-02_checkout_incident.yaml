@@ -1,0 +1,58 @@
+name: gold-tool-checkout-incident
+version: v1
+cases:
+  - id: checkout-incident
+    title: Checkout API Incident
+    question: |
+      Analyze the checkout outage from deploy timeline, metrics, logs, and regional failure counts.
+    expected_answer: |
+      The answer must cite evidence from deploys.csv, metrics.csv, logs.jsonl, and regional_failures.csv.
+
+      Timeline:
+      - 10:30 UTC baseline was healthy: p95 latency 220 ms, error_rate 0.006, checkout_success_rate 0.973.
+      - 10:42 UTC checkout-api v2026.06.29-2 deployed a tax cache key refactor from tax:{region}:{sku} to tax:{sku} and increased TTL from 60s to 3600s.
+      - 10:45-12:00 UTC metrics degraded: p95 rose from 410 ms to a peak of 1510 ms, error_rate rose to a peak of 0.121, and success rate fell to a low of 0.842.
+      - Logs after deploy show TAX_RATE_MISMATCH for CA, NY, WA, and TX where cache key tax:SKU-77 or tax:SKU-19 reused a rate from a different region.
+      - 11:15 UTC payments-api logging deploy is a false lead because errors are in checkout-api and started after the 10:42 checkout deploy.
+      - 12:05 UTC checkout rollback to v2026.06.29-1 occurred.
+      - 12:15-12:30 UTC metrics recovered toward baseline: p95 320 then 240 ms, error_rate 0.019 then 0.008, success 0.952 then 0.970.
+
+      Root cause:
+      - checkout-api v2026.06.29-2 removed region from the tax cache key by using tax:{sku}. Tax rates are region-specific, so one region's cached tax rate was reused for another region.
+      - The TTL increase to 3600 seconds made incorrect cache entries persist longer.
+      - The evidence is logs such as CA expected 0.0825 but cached 0.0000 using tax:SKU-77, NY expected 0.08875 but cached 0.0000, WA expected 0.0650 but cached 0.0825, and CA SKU-19 later expected 0.0825 but cached 0.0650.
+
+      Blast radius:
+      - regional_failures.csv total failures = 1180 + 760 + 410 + 8 + 0 = 2358.
+      - total checkouts = 8200 + 5400 + 3000 + 1200 + 900 = 18700.
+      - observed failure rate across the regional table = 2358 / 18700 = 12.61%.
+      - CA contributed 1180 / 2358 = 50.04% of failures.
+      - NY contributed 760 / 2358 = 32.23%.
+      - WA contributed 410 / 2358 = 17.39%.
+      - TX contributed 8 / 2358 = 0.34%.
+      - DE had 0 failures and appears unaffected in the regional table.
+
+      Why rollback helped:
+      - Rollback restored the region-scoped key tax:{region}:{sku}, preventing cross-region tax-rate reuse. The metrics improved after 12:05.
+
+      Remediation:
+      - Immediate: keep rollback, flush tax cache keys written by v2026.06.29-2, add monitoring for TAX_RATE_MISMATCH, and verify CA/NY/WA/TX checkout flows.
+      - Long term: require cache-key compatibility tests, include region in cache-key contract tests, canary tax-cache changes by region, prevent TTL increases during key migrations, and add automated rollback thresholds on mismatch/error-rate spikes.
+    rubric: |
+      Must identify checkout-api v2026.06.29-2 tax cache key refactor as root cause, calculate blast radius from regional_failures.csv, cite metric recovery after rollback, and rule out payments-api as a false lead.
+    keywords:
+      - v2026.06.29-2
+      - tax:{sku}
+      - TAX_RATE_MISMATCH
+      - 2358
+      - 18700
+      - 12.61%
+      - 50.04%
+      - rollback
+    assertions:
+      - type: keywords
+        value: ["v2026.06.29-2", "tax:{sku}", "TAX_RATE_MISMATCH", "2358", "18700", "12.61", "rollback"]
+        all_required: true
+      - type: not-contains
+        value: "payments-api was the root cause"
+

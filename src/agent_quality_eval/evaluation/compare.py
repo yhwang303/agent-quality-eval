@@ -8,6 +8,42 @@ from typing import Any
 from .store import DatasetStore
 
 
+# Cross-side assertion patterns. Surfaced in the A/B detail view so users can
+# spot assertions that look like signal but are actually telling them nothing
+# (e.g. always pass) or that flip in unexpected directions.
+ASSERTION_PATTERNS = {
+    "non_discriminating": "non_discriminating",   # passes on both sides
+    "always_failing": "always_failing",           # fails on both sides
+    "candidate_helps": "candidate_helps",         # baseline fail, candidate pass
+    "candidate_hurts": "candidate_hurts",         # baseline pass, candidate fail
+    "mixed": "mixed",                             # ambiguous; one side missing
+}
+
+
+def classify_assertion_pattern(
+    *,
+    baseline_passed: Any,
+    candidate_passed: Any,
+) -> str:
+    """Classify a paired assertion outcome into one of the four diagnostics.
+
+    The four patterns mirror the skill-creator analyzer's "per-assertion
+    paradoxes" diagnostic. Anything that is missing on one side is reported as
+    `mixed` so the UI can flag it without claiming a direction.
+    """
+    if baseline_passed is None or candidate_passed is None:
+        return ASSERTION_PATTERNS["mixed"]
+    if baseline_passed and candidate_passed:
+        return ASSERTION_PATTERNS["non_discriminating"]
+    if not baseline_passed and not candidate_passed:
+        return ASSERTION_PATTERNS["always_failing"]
+    if not baseline_passed and candidate_passed:
+        return ASSERTION_PATTERNS["candidate_helps"]
+    if baseline_passed and not candidate_passed:
+        return ASSERTION_PATTERNS["candidate_hurts"]
+    return ASSERTION_PATTERNS["mixed"]
+
+
 @dataclass
 class ComparisonResult:
     baseline_id: str

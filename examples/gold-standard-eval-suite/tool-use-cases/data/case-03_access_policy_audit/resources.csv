@@ -1,0 +1,6 @@
+resource_id,name,classification,allowed_departments,allow_contractors,owner
+r_payroll,Payroll Export,restricted,Finance|HR,false,HR
+r_source,Production Source Repo,confidential,Engineering,false,Engineering
+r_contracts,Vendor Contracts,confidential,Legal|Finance,false,Legal
+r_pipeline,CI Secrets Vault,restricted,Engineering,false,Security
+r_crm,CRM Contacts,internal,Sales|Finance,true,Sales

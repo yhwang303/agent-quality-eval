@@ -1,0 +1,45 @@
+id: reference-answer-sample
+name: Reference Answer Sample
+version: v1
+description: >
+  Upload this file from Reference Eval to try the optional answer-key
+  evaluation flow. Replace these sample cases with your own questions,
+  expected outputs, rubrics, keywords, and assertions.
+cases:
+  - id: trace-eval-summary
+    title: Explain trace eval output
+    question: What should a trace eval report explain to a user?
+    expected_answer: >
+      A good trace eval report should summarize whether the agent completed
+      the user goal, show important evidence from the trace, identify tool
+      usage and failure points, and include token or latency cost signals
+      when they are available.
+    keywords:
+      - user goal
+      - trace evidence
+      - tool usage
+      - token
+    assertions:
+      - type: contains
+        value: trace
+      - type: no-error
+      - type: max-tokens
+        value: 3000
+  - id: abtest-boundary
+    title: Distinguish A/B from reference eval
+    question: How is A/B comparison different from checking against a standard answer?
+    expected_answer: >
+      A/B comparison compares two traces against each other. Reference answer
+      evaluation checks one trace against an expected output or answer key.
+      They can be complementary, but they answer different questions.
+    keywords:
+      - compares two traces
+      - expected output
+      - complementary
+    assertions:
+      - type: keyword
+        value:
+          - two traces
+          - expected
+        threshold: 0.5
+      - type: no-error

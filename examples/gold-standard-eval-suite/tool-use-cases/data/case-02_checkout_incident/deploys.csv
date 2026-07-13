@@ -1,0 +1,5 @@
+time_utc,service,version,change
+2026-06-29T10:15:00Z,catalog-api,v2026.06.29-1,search ranking config refresh
+2026-06-29T10:42:00Z,checkout-api,v2026.06.29-2,tax cache key refactor from tax:{region}:{sku} to tax:{sku}; ttl 60s to 3600s
+2026-06-29T11:15:00Z,payments-api,v2026.06.29-1,card network retry logging only
+2026-06-29T12:05:00Z,checkout-api,v2026.06.29-1,rollback tax cache key refactor

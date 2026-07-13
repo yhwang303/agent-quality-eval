@@ -6,6 +6,7 @@ import os
 import runpy
 import shutil
 import sys
+import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -248,7 +249,17 @@ def _run_tray(port: int) -> None:
         webbrowser.open(url)
 
     def open_settings(_icon=None, _item=None) -> None:
-        webbrowser.open(url + "?settings=1")
+        try:
+            request = urllib.request.Request(
+                url + "api/evals/ui/open-settings",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=1):
+                pass
+        except Exception:
+            pass
 
     def quit_app(icon, _item=None) -> None:
         try:
@@ -259,12 +270,17 @@ def _run_tray(port: int) -> None:
             pass
         icon.stop()
 
+    try:
+        image = _make_tray_image()
+    except Exception:
+        return
+
     icon = pystray.Icon(
         "agent-quality-eval",
-        _make_tray_image(),
+        image,
         "Agent Quality Eval",
         pystray.Menu(
-            pystray.MenuItem("Open", open_app),
+            pystray.MenuItem("Open", open_app, default=True),
             pystray.MenuItem("Settings", open_settings),
             pystray.MenuItem("Quit", quit_app),
         ),

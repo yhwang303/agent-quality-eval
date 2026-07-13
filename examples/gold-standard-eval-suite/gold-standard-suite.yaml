@@ -1,0 +1,294 @@
+name: gold-standard-eval-suite
+version: v1
+description: Complex reference-answer cases for validating trace-level Gold Standard evaluation.
+cases:
+  - id: emergency-routing
+    title: Emergency Supply Routing
+    question: |
+      Plan a 24-hour emergency supply dispatch for a fictional island city after a typhoon using the provided district needs, vehicle capacities, and supply weights.
+    expected_answer: |
+      A strong answer should compute demand before assigning vehicles:
+
+      Demand:
+      - North Pier water: 1,200 people x 2 = 2,400 water packs = 2,400 kg.
+      - North Pier medical kits: ceil(1,200 / 20) = 60 kits = 120 kg.
+      - East Hill water: no immediate 24-hour water dispatch required by the prompt because it has water for 12 hours but the minimum target says water only for districts that need water; East Hill explicitly has no medical kits, so medical kits are required.
+      - East Hill medical kits: ceil(800 / 20) = 40 kits = 80 kg.
+      - South Flats water: 1,500 x 2 = 3,000 packs = 3,000 kg.
+      - South Flats food: 1,500 x 0.8 = 1,200 kg.
+      - South Flats blankets: ceil(1,500 / 3) = 500 blankets x 1.2 = 600 kg.
+      - Total demand is far above available 4,320 kg capacity, so the answer must explain unmet demand.
+
+      Available capacity:
+      - Trucks: 2 trucks x 3 trips x 600 kg = 3,600 kg.
+      - Helicopter: 1 helicopter x 4 trips x 180 kg = 720 kg.
+      - Total transport capacity = 4,320 kg.
+
+      Correct prioritization:
+      - Helicopter must serve East Hill because road access is blocked and helicopter landing is possible.
+      - East Hill medical kits need only 80 kg, leaving 640 kg helicopter capacity. A good answer may allocate the remaining helicopter capacity to East Hill water as buffer after the first 12 hours, but should label it as partial because full 1,600 water packs would weigh 1,600 kg.
+      - Road-accessible districts should be served by trucks. Since full demand cannot be met, life-safety items should be prioritized: medical kits, drinking water, then food/blankets.
+
+      One acceptable concrete dispatch plan:
+      - Helicopter trip 1: East Hill 40 medical kits = 80 kg, plus 100 water packs = 100 kg, total 180 kg.
+      - Helicopter trips 2-4: East Hill 180 water packs each = 540 water packs, 540 kg.
+      - Helicopter total: East Hill 40 medical kits and 640 water packs, 720 kg used, 0 kg remaining.
+      - Truck A trips 1-3: North Pier 600 water packs per trip = 1,800 water packs, 1,800 kg.
+      - Truck B trip 1: North Pier 60 medical kits = 120 kg plus 480 water packs = 480 kg, total 600 kg.
+      - Truck B trips 2-3: South Flats 600 water packs per trip = 1,200 water packs, 1,200 kg.
+      - Truck total: North Pier 60 medical kits and 2,280 water packs; South Flats 1,200 water packs.
+
+      Remaining capacity:
+      - All truck and helicopter capacity is used.
+
+      Unmet demand:
+      - North Pier lacks 120 water packs.
+      - East Hill lacks 960 water packs if water is considered needed for the second half of the day.
+      - South Flats lacks 1,800 water packs, all 1,500 food packs, and all 500 blankets.
+
+      The answer should explicitly state that this is a triage plan, not full fulfillment, and should recommend requesting more transport, boats/high-clearance vehicles for South Flats, or a second-day resupply.
+    rubric: |
+      Must show arithmetic, vehicle capacity, road/helicopter constraints, unmet demand, and a defensible prioritization. Do not claim all demand is satisfied.
+    keywords:
+      - 4,320 kg
+      - helicopter
+      - East Hill
+      - unmet demand
+      - ceil
+      - triage
+    assertions:
+      - type: keywords
+        value: ["4,320", "East Hill", "helicopter", "unmet", "North Pier", "South Flats"]
+        all_required: true
+      - type: not-contains
+        value: "all demand is fully met"
+      - type: llm-rubric
+        optional: true
+        criteria: "The answer must calculate demand and capacity correctly and explain why full demand cannot be met."
+
+  - id: subscription-cohort-sql
+    title: Subscription Cohort SQL
+    question: |
+      Write a PostgreSQL query for 30-day paid activation rate and average first-month revenue by signup month and country.
+    expected_answer: |
+      A strong answer should use user-level aggregation before cohort aggregation so users are counted once.
+
+      Acceptable PostgreSQL query:
+
+      ```sql
+      WITH first_30_day_subscriptions AS (
+        SELECT
+          u.user_id,
+          date_trunc('month', u.signup_date)::date AS cohort_month,
+          u.country,
+          s.subscription_id,
+          s.started_at,
+          s.monthly_price_usd
+        FROM users u
+        LEFT JOIN subscriptions s
+          ON s.user_id = u.user_id
+         AND s.started_at >= u.signup_date
+         AND s.started_at < u.signup_date + INTERVAL '30 days'
+      ),
+      user_level AS (
+        SELECT
+          user_id,
+          cohort_month,
+          country,
+          MIN(started_at) AS first_paid_started_at,
+          COALESCE(SUM(monthly_price_usd) FILTER (WHERE subscription_id IS NOT NULL), 0) AS first_month_revenue
+        FROM first_30_day_subscriptions
+        GROUP BY user_id, cohort_month, country
+      )
+      SELECT
+        cohort_month,
+        country,
+        COUNT(*) AS users_signed_up,
+        COUNT(*) FILTER (WHERE first_paid_started_at IS NOT NULL) AS activated_users,
+        ROUND(
+          COUNT(*) FILTER (WHERE first_paid_started_at IS NOT NULL)::numeric
+          / NULLIF(COUNT(*), 0),
+          4
+        ) AS activation_rate,
+        ROUND(
+          AVG(first_month_revenue) FILTER (WHERE first_paid_started_at IS NOT NULL),
+          2
+        ) AS avg_first_month_revenue
+      FROM user_level
+      GROUP BY cohort_month, country
+      ORDER BY cohort_month, country;
+      ```
+
+      Edge cases that should be explained:
+      - Multiple subscriptions within 30 days do not double-count activated users because activation is counted at user level.
+      - Users with no subscription remain in the denominator because of the LEFT JOIN.
+      - `NULLIF(COUNT(*), 0)` prevents division by zero.
+      - The date condition uses `>= signup_date` and `< signup_date + interval '30 days'` to avoid including subscriptions outside the 30-day window.
+    rubric: |
+      Must aggregate at user level, count activated users once, keep non-activated users in denominator, avoid division by zero, and compute revenue only for activated users.
+    keywords:
+      - date_trunc
+      - LEFT JOIN
+      - NULLIF
+      - FILTER
+      - user_level
+      - 30 days
+    assertions:
+      - type: keywords
+        value: ["date_trunc", "LEFT JOIN", "NULLIF", "FILTER", "30 days"]
+        all_required: true
+      - type: contains
+        value: "GROUP BY"
+      - type: llm-rubric
+        optional: true
+        criteria: "The query must avoid double counting users with multiple subscriptions."
+
+  - id: privacy-incident-response
+    title: Privacy Incident Response
+    question: |
+      Classify the fictional privacy incident and propose containment, investigation, communications, and prevention steps.
+    expected_answer: |
+      A strong answer should classify the incident as a moderate privacy incident, not as negligible and not automatically as maximum severity.
+
+      Severity:
+      - Moderate / medium-high privacy incident.
+      - Reasons increasing severity: 4,200 customer rows, customer emails, free-text ticket bodies that may contain sensitive content, external contractors on the list, and 11 confirmed downloads.
+      - Reasons limiting severity: internal distribution only, no passwords, payment cards, government IDs, or auth tokens, deletion from archive after 90 minutes.
+      - The answer must not assert a specific legal notification deadline because no jurisdiction is given.
+
+      First 24 hours:
+      - Preserve evidence: export job logs, mailing list recipient list, message headers, download/audit logs, deletion timestamp.
+      - Confirm containment: delete archive copy, request written deletion confirmation from all 40 recipients, especially 11 downloaders, and disable forwarding or external sharing if possible.
+      - Restrict access to the export pipeline and pause similar exports until fixed.
+      - Notify internal incident/privacy/security/legal owners.
+      - Identify whether contractors are covered by confidentiality and data processing obligations.
+
+      Investigation questions:
+      - Why did the export include free-text body and email?
+      - Was the mailing list the intended recipient?
+      - Were any recipients external to the company domain?
+      - Did any downloaded copy move to unmanaged devices or cloud drives?
+      - How many affected customers and what categories of ticket content are involved?
+      - Is this a one-time job or recurring pipeline issue?
+
+      Communication considerations:
+      - Legal/privacy should decide regulator/customer notification based on jurisdiction, actual content sensitivity, contractual commitments, and evidence of further disclosure.
+      - Customer communication, if required, should state what happened, data categories, containment, recommended actions, and contact channel.
+      - Internal communication should avoid redistributing the CSV.
+
+      Preventive controls:
+      - Data minimization and column allowlists for support exports.
+      - DLP scanning for email/customer identifiers and free-text sensitive content.
+      - Approval workflow for exports to broad mailing lists.
+      - Automatic expiry/watermarking for exported files.
+      - Recipient access review and contractor segmentation.
+      - Tests and monitoring for export schema changes.
+    rubric: |
+      Must classify severity with balanced reasoning, avoid invented legal deadlines, include containment, investigation, communication, and prevention.
+    keywords:
+      - moderate
+      - 4,200
+      - free-text
+      - 11 recipients
+      - no specific statutory deadline
+      - DLP
+    assertions:
+      - type: keywords
+        value: ["moderate", "4,200", "free-text", "11", "DLP"]
+        all_required: true
+      - type: not-contains
+        value: "72 hours"
+      - type: llm-rubric
+        optional: true
+        criteria: "The answer must not invent jurisdiction-specific legal requirements."
+
+  - id: contract-risk-memo
+    title: Vendor Contract Risk Memo
+    question: |
+      Write a concise risk memo for a SaaS buyer based on the fictional vendor clause.
+    expected_answer: |
+      A strong answer should be a buyer-side risk memo, not a generic summary.
+
+      Top five risks, ranked:
+      1. Uncontrolled subprocessors.
+         - Why it matters: Vendor can choose subprocessors at sole discretion, creating data transfer, security, and compliance risk.
+         - Negotiation position: require prior notice, objection right, flow-down obligations, subprocessor list, and liability for subprocessor acts.
+      2. Overbroad de-identified data use.
+         - Why it matters: "Any Vendor product or service" is broader than improving the contracted service and may create confidentiality or competitive concerns.
+         - Negotiation position: limit use to aggregated/de-identified data for maintaining and improving the contracted service; prohibit re-identification and customer-identifiable outputs.
+      3. Very low liability cap.
+         - Why it matters: one month of fees may be inadequate for data breach, confidentiality breach, IP infringement, or gross misconduct.
+         - Negotiation position: increase general cap to 12 months of fees and create higher or uncapped carve-outs for confidentiality, data protection, security incidents, IP indemnity, fraud, and willful misconduct.
+      4. Weak availability commitment and sole service-credit remedy.
+         - Why it matters: "commercially reasonable efforts" is vague, and service credits may not compensate business interruption.
+         - Negotiation position: add measurable SLA, uptime target, support response times, termination right for chronic failure, and preserve other remedies for material breach.
+      5. Termination for convenience on 10 days' notice.
+         - Why it matters: buyer may lose operational continuity with little migration time.
+         - Negotiation position: require longer notice, transition assistance, data export, refund for prepaid unused fees, and survival of data return/deletion obligations.
+
+      Final recommendation:
+      - Do not accept as written for a material SaaS vendor handling Customer Data.
+      - Accept only after tightening data use, subprocessors, availability, liability, and termination assistance.
+      - Do not claim the clause is illegal or cite governing law because none is provided.
+    rubric: |
+      Must rank five risks, give why it matters, give redline/negotiation positions, and avoid inventing governing law.
+    keywords:
+      - subprocessors
+      - de-identified
+      - liability cap
+      - service credit
+      - termination for convenience
+      - transition assistance
+    assertions:
+      - type: keywords
+        value: ["subprocessors", "de-identified", "liability", "service credit", "termination"]
+        all_required: true
+      - type: not-contains
+        value: "illegal"
+      - type: llm-rubric
+        optional: true
+        criteria: "The memo must include concrete negotiation positions, not only risk labels."
+
+  - id: experiment-analysis
+    title: Experiment Analysis
+    question: |
+      Analyze an onboarding checklist experiment with control and treatment metrics.
+    expected_answer: |
+      Correct calculations:
+      - Control activation rate = 3,000 / 12,000 = 25.00%.
+      - Treatment activation rate = 3,186 / 11,800 = 27.00%.
+      - Absolute lift = 27.00% - 25.00% = 2.00 percentage points.
+      - Relative lift = 2.00 / 25.00 = 8.00%.
+      - Median time to activation improved from 44 hours to 39 hours, a 5-hour reduction.
+      - Support tickets increased from 28 to 35 per 1,000 users, an increase of 7 per 1,000 or 25%.
+
+      Recommendation:
+      - Launch to a limited rollout or staged rollout, not an unconditional full launch.
+      - The activation lift and faster activation are positive, but the support-ticket increase is a meaningful cost/risk signal.
+
+      Follow-up checks:
+      - Check statistical confidence/significance and confidence intervals for activation lift.
+      - Segment by user type/country/channel to ensure lift is not concentrated in one segment.
+      - Inspect support ticket categories to see whether checklist confusion caused more contacts.
+      - Measure downstream retention, paid conversion, or churn, not only 7-day activation.
+      - Confirm no instrumentation changes affected activation or support metrics.
+
+      A strong answer should show the arithmetic and not recommend full launch without caveats.
+    rubric: |
+      Must compute activation rates, absolute lift, relative lift, time improvement, support-ticket increase, and give a cautious launch recommendation.
+    keywords:
+      - 25.00%
+      - 27.00%
+      - 2.00 percentage points
+      - 8.00%
+      - 5-hour
+      - 25%
+    assertions:
+      - type: keywords
+        value: ["25.00%", "27.00%", "2.00", "8.00", "5-hour", "25%"]
+        all_required: true
+      - type: not-contains
+        value: "unconditional full launch"
+      - type: llm-rubric
+        optional: true
+        criteria: "The recommendation must balance activation gain against increased support burden."

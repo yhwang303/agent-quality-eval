@@ -1,0 +1,50 @@
+name: gold-tool-marketplace-reconciliation
+version: v1
+cases:
+  - id: marketplace-reconciliation
+    title: Marketplace Reconciliation
+    question: |
+      Reconcile marketplace orders, payments, refunds, and chargebacks from the local CSV files.
+    expected_answer: |
+      The answer must show that it inspected and joined orders.csv, payments.csv, refunds.csv, and chargebacks.csv.
+
+      Required discrepancy table:
+
+      - O-1004: canceled order has a settled captured payment of 45.00 and refund R-5003 failed. Severity critical/high. Action: void or refund 45.00 and investigate why a canceled order was captured.
+      - O-1005: shipped order gross amount is 310.75 but settled payment P-9005 is 300.75. Underpaid by 10.00. Severity high. Action: collect or adjust the 10.00 gap.
+      - O-1006: shipped order gross amount is 64.20 but payment P-9006 is pending and has no settled_date. Unsettled revenue exposure is 64.20. Severity medium/high. Action: retry settlement or follow up with PSP.
+      - O-1008: refunded order gross amount is 78.00, settled payment is 78.00, but processed refund is only 50.00. Customer refund gap is 28.00. Severity high. Action: process remaining 28.00 if full refund is intended.
+      - O-1007: shipped order has unexpected processed refund R-5004 of 20.00. Severity medium. Action: investigate revenue leakage or customer adjustment.
+      - O-1010: shipped order gross amount 33.30 has no payment row. Missing payment exposure is 33.30. Severity high. Action: find payment or mark order unpaid.
+      - O-9999: settled payment P-9010 for 19.99 has no matching order. Orphan payment liability is 19.99. Severity medium. Action: identify customer/order or refund.
+      - O-1002: chargeback CB-7002 is lost for 89.50. Confirmed chargeback loss is 89.50. Severity high. Action: record loss and review fraud/dispute evidence.
+      - O-1009: chargeback CB-7001 is won for 502.10. It should be mentioned as monitored/no confirmed cash loss, not counted as lost revenue.
+
+      Required category totals:
+
+      - Missing or underpaid revenue exposure = O-1005 10.00 + O-1006 64.20 + O-1010 33.30 = 107.50.
+      - Refund/customer liability = O-1004 45.00 + O-1008 28.00 + O-1007 20.00 = 93.00.
+      - Orphan payment liability = 19.99.
+      - Confirmed chargeback loss = 89.50.
+
+      Executive summary should state that the largest confirmed single cash loss is the lost O-1002 chargeback at 89.50, the largest operational revenue exposure category is missing/underpaid revenue at 107.50, and there are control issues around canceled captures, orphan payments, and refund completeness.
+    rubric: |
+      Must use all four CSV files, identify every listed discrepancy, calculate exact amounts, separate exposure categories, and avoid counting the won chargeback as a loss.
+    keywords:
+      - O-1004
+      - O-1005
+      - O-1006
+      - O-1008
+      - O-1010
+      - O-9999
+      - 107.50
+      - 93.00
+      - 19.99
+      - 89.50
+    assertions:
+      - type: keywords
+        value: ["O-1004", "O-1005", "O-1006", "O-1008", "O-1010", "O-9999", "107.50", "93.00", "19.99", "89.50"]
+        all_required: true
+      - type: not-contains
+        value: "O-1009 is a confirmed loss"
+

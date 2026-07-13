@@ -3,6 +3,7 @@ import sys
 import types
 from pathlib import Path
 
+from agent_quality_eval.evaluation.critic import CRITIC_REPORT_SCHEMA_VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,7 +51,7 @@ def test_api_rerun_reports_are_not_valid_hook_artifacts(monkeypatch, tmp_path):
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "legacy-api-rerun",
             "turn_index": 0,
@@ -159,7 +160,7 @@ def test_hook_report_can_be_ingested_without_model_rerun(monkeypatch, tmp_path):
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "hook-ingest",
             "turn_index": 1,
@@ -201,7 +202,7 @@ def test_running_hook_report_is_not_rendered_as_completed_judge(monkeypatch, tmp
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "stale-running",
             "turn_index": 1,
@@ -261,7 +262,7 @@ def test_manual_eval_retries_stale_running_hook_report(monkeypatch, tmp_path):
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "retry-stale-running",
             "turn_index": 0,
@@ -305,7 +306,7 @@ def test_manual_eval_recovers_completed_manual_fallback_when_live_hook_exists(mo
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "recover-manual-fallback",
             "turn_index": 0,
@@ -368,7 +369,7 @@ def test_manual_eval_recovers_completed_manual_fallback_when_turn_has_hook_times
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "recover-turn-hook-evidence",
             "turn_index": 4,
@@ -422,7 +423,7 @@ def test_manual_eval_degrades_to_fallback_when_hook_report_errored(monkeypatch, 
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "hook-error-fallback",
             "turn_index": 0,
@@ -465,7 +466,7 @@ def test_real_hook_report_can_replace_manual_hook_recovery(monkeypatch, tmp_path
 
     write_critic_report(
         {
-            "schema_version": "agent-critic-v1",
+            "schema_version": CRITIC_REPORT_SCHEMA_VERSION,
             "eval_method": "agent_critic_v1",
             "session_id": "replace-recovery",
             "turn_index": 0,
