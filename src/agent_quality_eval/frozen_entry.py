@@ -228,12 +228,23 @@ def _stop_other_eval_processes() -> None:
 
 
 def _make_tray_image():
-    from PIL import Image, ImageDraw
+    from PIL import Image
 
-    img = Image.new("RGBA", (64, 64), (8, 16, 30, 255))
+    try:
+        from .desktop import _logo_path
+
+        logo = _logo_path()
+        if logo is not None:
+            return Image.open(logo).convert("RGBA")
+    except Exception:
+        pass
+
+    from PIL import ImageDraw
+
+    img = Image.new("RGBA", (64, 64), (11, 17, 32, 255))
     draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle((6, 6, 58, 58), radius=12, fill=(14, 165, 233, 255))
-    draw.text((16, 20), "AE", fill=(255, 255, 255, 255))
+    draw.rounded_rectangle((6, 6, 58, 58), radius=14, fill=(37, 99, 235, 255))
+    draw.text((18, 22), "AE", fill=(255, 255, 255, 255))
     return img
 
 
@@ -278,7 +289,7 @@ def _run_tray(port: int) -> None:
     icon = pystray.Icon(
         "agent-quality-eval",
         image,
-        "Agent Quality Eval",
+        "Agent Observation",
         pystray.Menu(
             pystray.MenuItem("Open", open_app, default=True),
             pystray.MenuItem("Settings", open_settings),
@@ -304,6 +315,20 @@ def main() -> None:
         return
 
     if len(sys.argv) == 1:
+        # Real desktop-app presentation: an immediate splash + a native
+        # WebView2 window instead of a silent-then-sudden browser tab. This
+        # changes presentation only — the backend, bootstrap and data flow
+        # are identical. If the native window can't be created we fall through
+        # to the historical browser + tray path so the app always comes up.
+        if getattr(sys, "frozen", False):
+            try:
+                from .desktop import run_app as run_desktop_app
+
+                if run_desktop_app():
+                    return
+            except Exception:
+                pass
+
         # One-click behavior: first-run setup, then start the copied observation dashboard.
         try:
             from .cli import bootstrap_observation_runtime, bootstrap_workspace

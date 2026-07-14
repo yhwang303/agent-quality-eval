@@ -852,6 +852,119 @@ def _build_session_overview(
     return info
 
 
+# ---------------------------------------------------------------------------
+# refresh 加速：按文件 mtime/size 缓存已构建的 session overview
+# ---------------------------------------------------------------------------
+# 背景：`scan_sessions()` 之前每次刷新都会重读并 json.loads 全部 `*_cot.json`，
+# 再逐个跑一遍 overview 抽取。trace 攒到三个月量级（成百上千个大文件）后，单次
+# 刷新要十几秒。这里加一层进程内缓存：只有当 cot 文件本身、或它附属的
+# `*_report.json` / `*_full.json` 发生变化时才重新解析，其余直接复用上次结果。
+#
+# 关键：输出与非缓存实现「完全一致」——缓存键覆盖了 `_build_session_overview`
+# 读取的所有文件（cot 内容 + report 内容 + transcript 是否存在），所以任一变化
+# 都会触发重新构建，report/transcript 的更新会立即反映到列表里。这只是把重复的
+# 磁盘读取和 JSON 解析省掉，不改变任何产品行为。
+_OVERVIEW_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _stat_key(path: Optional[Path]) -> Optional[tuple]:
+    """返回 (mtime_ns, size) 作为文件版本指纹；文件不存在时返回 None。"""
+    if path is None:
+        return None
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _local_overview_cached(cot_file: Path) -> tuple:
+    """本机 session：带 mtime 缓存地构建 overview。
+
+    返回 ``(session_id, overview)``；``overview`` 为 ``None`` 表示该文件应跳过
+    （空文件 / 解析失败 / subagent）。命中缓存时会顺带复查附属 report/transcript
+    的版本指纹，任一变化都会重建，保证结果与直接扫描完全一致。
+    """
+    path_str = str(cot_file)
+    cot_key = _stat_key(cot_file)
+    if cot_key is None:
+        _OVERVIEW_CACHE.pop(path_str, None)
+        return ("", None)
+
+    entry = _OVERVIEW_CACHE.get(path_str)
+    if entry is not None and entry.get("cot_key") == cot_key:
+        report_path = entry.get("report_path")
+        full_path = entry.get("full_path")
+        report_key = _stat_key(report_path)
+        full_exists = full_path.exists() if full_path is not None else False
+        if report_key == entry.get("report_key") and full_exists == entry.get("full_exists"):
+            return (entry.get("session_id", ""), entry.get("overview"))
+
+    cot_data = _read_json(cot_file)
+    if not cot_data:
+        _OVERVIEW_CACHE[path_str] = {
+            "cot_key": cot_key, "session_id": "", "overview": None,
+            "report_path": None, "report_key": None,
+            "full_path": None, "full_exists": False,
+        }
+        return ("", None)
+
+    session_id = cot_data.get("session_id", cot_file.stem.replace("_cot", ""))
+    if _is_subagent_sid(session_id):
+        _OVERVIEW_CACHE[path_str] = {
+            "cot_key": cot_key, "session_id": session_id, "overview": None,
+            "report_path": None, "report_key": None,
+            "full_path": None, "full_exists": False,
+        }
+        return (session_id, None)
+
+    overview = _build_session_overview(cot_data, session_id)
+    report_path = RESPONSE_REPORTS_DIR / f"{session_id}_report.json"
+    full_path = TRANSCRIPTS_DIR / f"{session_id}_full.json"
+    _OVERVIEW_CACHE[path_str] = {
+        "cot_key": cot_key, "session_id": session_id, "overview": overview,
+        "report_path": report_path, "report_key": _stat_key(report_path),
+        "full_path": full_path, "full_exists": full_path.exists(),
+    }
+    return (session_id, overview)
+
+
+def _central_overview_cached(cot_file: Path, owner: str) -> Optional[Dict[str, Any]]:
+    """Central uplink session：带 mtime 缓存地构建 overview（central 只搬 cot.json）。"""
+    cache_key = f"central::{owner}::{cot_file}"
+    cot_key = _stat_key(cot_file)
+    if cot_key is None:
+        _OVERVIEW_CACHE.pop(cache_key, None)
+        return None
+
+    entry = _OVERVIEW_CACHE.get(cache_key)
+    if entry is not None and entry.get("cot_key") == cot_key:
+        return entry.get("overview")
+
+    cot_data = _read_json(cot_file)
+    if not cot_data:
+        _OVERVIEW_CACHE[cache_key] = {"cot_key": cot_key, "overview": None}
+        return None
+
+    raw_sid = cot_data.get("session_id") or cot_file.stem.replace("_cot", "")
+    uplink_meta = cot_data.get("_uplink") or {}
+    host = uplink_meta.get("host") if isinstance(uplink_meta, dict) else None
+    received_at = uplink_meta.get("received_at") if isinstance(uplink_meta, dict) else None
+    namespaced_sid = f"{owner}{CENTRAL_SID_SEP}{raw_sid}"
+    overview = _build_session_overview(
+        cot_data, namespaced_sid,
+        owner=owner, host=host, received_at=received_at,
+    )
+    _OVERVIEW_CACHE[cache_key] = {"cot_key": cot_key, "overview": overview}
+    return overview
+
+
+def _prune_overview_cache(live_keys: set) -> None:
+    """删除已不存在于本次扫描结果里的文件缓存，避免长期运行内存无限增长。"""
+    for key in [k for k in _OVERVIEW_CACHE if k not in live_keys]:
+        _OVERVIEW_CACHE.pop(key, None)
+
+
 def scan_sessions() -> List[Dict[str, Any]]:
     """
     扫描 cot/ 目录 + central uplink 目录，发现所有 session。
@@ -861,10 +974,14 @@ def scan_sessions() -> List[Dict[str, Any]]:
     v0.18.0：合并本机 + 中央两种来源。中央 session 的 ``session_id`` 字段会被
     重写为 ``<owner>::<原sid>``，避免与本机 session 撞 id；前端筛选时以
     ``owner`` 字段为准。
+
+    v1.0.0：加入基于 mtime 的 overview 缓存，避免每次刷新都全量重新解析所有
+    cot 文件——在 trace 数量很大时把刷新耗时从数十秒降到与增量文件数成正比。
     """
     _maybe_refresh_codex_cot()
 
     sessions: List[Dict[str, Any]] = []
+    live_keys: set = set()
 
     # ── 1) 本机 session（COT_SCAN_DIRS 多目录扫描 + sid 去重）──
     seen_sids = set()  # AGENT_COT_PIPELINE_LOG_INJECT_v1
@@ -879,39 +996,29 @@ def scan_sessions() -> List[Dict[str, Any]]:
             filename = cot_file.name
             if filename.startswith("."):
                 continue
-            cot_data = _read_json(cot_file)
-            if not cot_data:
+            live_keys.add(str(cot_file))
+            session_id, overview = _local_overview_cached(cot_file)
+            if overview is None:
                 continue
-            session_id = cot_data.get("session_id", cot_file.stem.replace("_cot", ""))
-            if _is_subagent_sid(session_id):
-
-                continue
-
             if session_id in seen_sids:
                 continue
             seen_sids.add(session_id)
-            sessions.append(_build_session_overview(cot_data, session_id))
+            sessions.append(overview)
 
     # ── 2) Central uplink session（来自小组同事） ──
     try:
         for owner, cot_file in iter_central_cot_files():
-            cot_data = _read_json(cot_file)
-            if not cot_data:
+            live_keys.add(f"central::{owner}::{cot_file}")
+            overview = _central_overview_cached(cot_file, owner)
+            if overview is None:
                 continue
-            raw_sid = cot_data.get("session_id") or cot_file.stem.replace("_cot", "")
-            uplink_meta = cot_data.get("_uplink") or {}
-            host = uplink_meta.get("host") if isinstance(uplink_meta, dict) else None
-            received_at = uplink_meta.get("received_at") if isinstance(uplink_meta, dict) else None
-            # 命名空间化避免与本机撞 id
-            namespaced_sid = f"{owner}{CENTRAL_SID_SEP}{raw_sid}"
-            sessions.append(_build_session_overview(
-                cot_data, namespaced_sid,
-                owner=owner, host=host, received_at=received_at,
-            ))
+            sessions.append(overview)
     except Exception:
         # 中央扫描失败完全不影响本机 list
         import traceback
         traceback.print_exc()
+
+    _prune_overview_cache(live_keys)
 
     sessions.sort(key=lambda s: s.get("extracted_at", ""), reverse=True)
     return sessions

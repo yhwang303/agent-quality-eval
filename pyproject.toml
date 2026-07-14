@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-quality-eval"
-version = "0.1.71"
+version = "1.0.1"
 description = "Local-first agent observability plus automated evaluation and A/B testing."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "pillow>=10.0",
     "pystray>=0.19",
+    "pywebview>=5.0 ; platform_system == 'Windows'",
     "tomli>=2.0 ; python_version < '3.11'",
     "tomli_w>=1.0",
     "colorama>=0.4.6 ; platform_system == 'Windows'",
@@ -74,6 +75,7 @@ agent_cot = [
 ]
 agent_quality_eval = [
     "assets/*.html",
+    "assets/*.ico",
     "templates/*.yaml",
     "templates/*.md",
 ]

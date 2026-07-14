@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 version_text = Path('src/agent_quality_eval/__init__.py').read_text(encoding='utf-8')
 version = re.search(r'__version__\s*=\s*[\'"]([^\'"]+)[\'"]', version_text).group(1)
@@ -19,16 +19,29 @@ hiddenimports += collect_submodules('uvicorn')
 hiddenimports += collect_submodules('watchfiles')
 hiddenimports += collect_submodules('opentelemetry')
 
+# v1.0.0: native desktop window shell (pywebview + WebView2 via pythonnet).
+extra_binaries = []
+extra_datas = []
+hiddenimports += ['bottle', 'proxy_tools', 'clr']
+for _pkg in ('webview', 'pythonnet', 'clr_loader'):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+        extra_datas += _d
+        extra_binaries += _b
+        hiddenimports += _h
+    except Exception:
+        pass
+
 
 a = Analysis(
     ['scripts\\observation_agent_launcher.py'],
     pathex=[],
-    binaries=[],
+    binaries=extra_binaries,
     datas=[
         ('src\\agent_cot\\assets', 'agent_cot\\assets'),
         ('src\\agent_quality_eval\\assets', 'agent_quality_eval\\assets'),
         ('src\\agent_quality_eval\\templates', 'agent_quality_eval\\templates'),
-    ],
+    ] + extra_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

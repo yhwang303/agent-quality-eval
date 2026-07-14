@@ -48,6 +48,7 @@ export default function App() {
   const [report, setReport] = useState<ResponseReport | null>(null);
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [turnEvalReports, setTurnEvalReports] = useState<Record<string, TurnEvalReport>>({});
   const [liveCritic, setLiveCritic] = useState<any | null>(null);
@@ -146,6 +147,15 @@ export default function App() {
     api.getSessions()
       .then(setSessions)
       .catch(() => setError('无法连接后端，请确认 API 服务已启动。'));
+  }, []);
+
+  // 手动刷新 session 列表：带 loading 态，避免大量 trace 时刷新看起来「卡死」
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    api.getSessions()
+      .then(setSessions)
+      .catch(() => {})
+      .finally(() => setRefreshing(false));
   }, []);
 
   // 选中 session 时加载详情
@@ -426,7 +436,7 @@ export default function App() {
       {/* 顶部标题栏 */}
       <header className="app-header">
         <div className="header-left">
-          <span className="header-logo">🤖</span>
+          <img className="header-logo" src="/logo.png" alt="Agent Observation" width={26} height={26} />
           <span className="header-title">Agent Observation</span>
           <span className="header-sep">·</span>
           <span className="header-subtitle">Agent 观测平台</span>
@@ -514,10 +524,13 @@ export default function App() {
           <button className="btn-refresh" onClick={() => setEvalLogOpen(true)}>
             Eval Log
           </button>
-          <button className="btn-refresh" onClick={() => {
-            api.getSessions().then(setSessions).catch(() => {});
-          }}>
-            ↺ 刷新
+          <button
+            className={`btn-refresh ${refreshing ? 'is-refreshing' : ''}`}
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title={refreshing ? '正在刷新 trace 列表…' : '刷新 trace 列表'}
+          >
+            {refreshing ? '⏳ 刷新中…' : '↺ 刷新'}
           </button>
         </div>
       </header>
