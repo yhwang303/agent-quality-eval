@@ -4193,8 +4193,17 @@ def _build_plan_timeline(turns_cot: List["TurnCoT"]) -> List[PlanSnapshot]:
     timeline: List[PlanSnapshot] = []
     prev_todos_full: Optional[List[Dict]] = None
     snap_idx = 0
+    # 每个 turn 独立的 plan 序号（前端展示的 "#N"）——用户明确要求：新的
+    # 用户会话（= 新 turn）里的 plan 编号应该从 1 起，不应把全 session 内已
+    # 出现过的 plan 数量继续叠加。跨 turn 的连续性由内部 tasks/todos 列表
+    # 自己 tracking，跟前端展示编号解耦。
+    per_turn_idx = 0
+    prev_turn_index: Optional[int] = None
 
     for turn in turns_cot:
+        if prev_turn_index is None or turn.turn_index != prev_turn_index:
+            per_turn_idx = 0
+            prev_turn_index = turn.turn_index
         for s in turn.steps:
             if s.step_type != StepType.TOOL_DECISION:
                 continue
@@ -4244,7 +4253,7 @@ def _build_plan_timeline(turns_cot: List["TurnCoT"]) -> List[PlanSnapshot]:
             # merge=True 调用而言只有 ``[{id, status}, ...]``，缺 content，渲染
             # 出来「状态/内容/id」表格里"内容"列就是空的。
             md = s.metadata if isinstance(s.metadata, dict) else {}
-            md["plan_snapshot_idx"] = snap_idx
+            md["plan_snapshot_idx"] = per_turn_idx
             md["plan_diff"] = snap.diff
             md["plan_total"] = len(full_todos)
             md["plan_completed_count"] = len(snap.completed)
@@ -4257,6 +4266,7 @@ def _build_plan_timeline(turns_cot: List["TurnCoT"]) -> List[PlanSnapshot]:
             timeline.append(snap)
             prev_todos_full = full_todos
             snap_idx += 1
+            per_turn_idx += 1
 
     # v0.19.5: Claude Internal 用 TaskCreate / TaskUpdate 维护任务清单，跟
     # TodoWrite 是不同的两套 tool（不能强行重命名归一，因为语义不同——TodoWrite
@@ -4304,8 +4314,17 @@ def _build_plan_timeline_from_task_tools(
     # 内部任务有时不会作为顶层 tool_use 出现），直接静默跳过即可。
     tasks: List[Dict] = []
     snap_idx = 0
+    # 每个 turn 独立的 plan 序号（前端展示 "#N"）；跨 turn 时重置到 0，避免
+    # 一个 session 里 turn N 出现 "Plan #10"、turn N+1 出现 "Plan #11" 的
+    # 累加错觉。内部 tasks 列表跨 turn 保留是必需的（TaskUpdate 要引用之前
+    # TaskCreate 出的 id），跟展示编号无关。
+    per_turn_idx = 0
+    prev_turn_index: Optional[int] = None
 
     for turn in turns_cot:
+        if prev_turn_index is None or turn.turn_index != prev_turn_index:
+            per_turn_idx = 0
+            prev_turn_index = turn.turn_index
         for s in turn.steps:
             if s.step_type != StepType.TOOL_DECISION:
                 continue
@@ -4384,7 +4403,7 @@ def _build_plan_timeline_from_task_tools(
                 snap.diff = None
 
             md = s.metadata if isinstance(s.metadata, dict) else {}
-            md["plan_snapshot_idx"] = snap_idx
+            md["plan_snapshot_idx"] = per_turn_idx
             md["plan_diff"] = snap.diff
             md["plan_total"] = len(full_todos)
             md["plan_completed_count"] = len(snap.completed)
@@ -4396,6 +4415,7 @@ def _build_plan_timeline_from_task_tools(
 
             timeline.append(snap)
             snap_idx += 1
+            per_turn_idx += 1
 
     return timeline
 

@@ -3176,10 +3176,6 @@ function TurnDetail({
     return acc;
   }, {} as Record<string, number>);
 
-  // 子会话质量分：0~1 → 0~100 颜色
-  const q = turn.turn_quality_score;
-  const qColor = q == null ? '#64748b' : q >= 0.85 ? '#10b981' : q >= 0.6 ? '#f59e0b' : '#ef4444';
-
   return (
     <>
       <div className="dp-hero">
@@ -3204,27 +3200,6 @@ function TurnDetail({
         </div>
         <div className="dp-hero-sub">
           子会话 #{turn.turn_index} · {turn.total_steps} 步
-          {q != null && (
-            <span
-              style={{
-                marginLeft: 8,
-                padding: '1px 8px',
-                borderRadius: 10,
-                border: `1px solid ${qColor}55`,
-                color: qColor,
-                background: `${qColor}14`,
-                fontWeight: 700,
-                fontFamily: 'var(--font-mono)',
-              }}
-              title={
-                turn.quality_signals
-                  ? `final_response=${turn.quality_signals.has_final_response}  err=${turn.quality_signals.error_recovery_count ?? 0}  shift=${turn.quality_signals.strategy_shifts ?? 0}`
-                  : undefined
-              }
-            >
-              ✓ 质量 {Math.round(q * 100)}/100
-            </span>
-          )}
         </div>
       </div>
 
@@ -3376,41 +3351,6 @@ function TurnDetail({
         </Section>
       )}
 
-      {/* v0.8.2: 单 turn 质量分拆解 —— 之前只在 SubSessionDivider 的 tooltip 里
-          出现，用户根本看不到。现在升成可见 section，让人能直接评判
-          "这条质量分高在哪低在哪"。 */}
-      {turn.quality_signals && Object.keys(turn.quality_signals).length > 0 && (
-        <Section title="✓ 单轮质量分拆解">
-          <div className="dp-quality-grid">
-            <div className={`dp-quality-cell ${turn.quality_signals.has_final_response ? 'dp-q-ok' : 'dp-q-warn'}`}>
-              <div className="dp-quality-cell-key">final_response</div>
-              <div className="dp-quality-cell-val">
-                {turn.quality_signals.has_final_response ? '✓ 有最终回复' : '✗ 缺失最终回复'}
-              </div>
-            </div>
-            <div className={`dp-quality-cell ${(turn.quality_signals.error_recovery_count ?? 0) === 0 ? 'dp-q-ok' : 'dp-q-warn'}`}>
-              <div className="dp-quality-cell-key">error_recovery</div>
-              <div className="dp-quality-cell-val">
-                {turn.quality_signals.error_recovery_count ?? 0} 次
-              </div>
-            </div>
-            <div className={`dp-quality-cell ${(turn.quality_signals.strategy_shifts ?? 0) === 0 ? 'dp-q-ok' : 'dp-q-warn'}`}>
-              <div className="dp-quality-cell-key">strategy_shifts</div>
-              <div className="dp-quality-cell-val">
-                {turn.quality_signals.strategy_shifts ?? 0} 次
-              </div>
-            </div>
-            {typeof turn.quality_signals.score === 'number' && (
-              <div className="dp-quality-cell dp-q-score">
-                <div className="dp-quality-cell-key">score (0~1)</div>
-                <div className="dp-quality-cell-val dp-mono">
-                  {turn.quality_signals.score.toFixed(3)}
-                </div>
-              </div>
-            )}
-          </div>
-        </Section>
-      )}
 
       {/* Turn 统计 */}
       <Section title="Turn 统计">

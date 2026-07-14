@@ -268,18 +268,6 @@ function getTurnLabel(turn: TurnCoT): { icon: string; label: string; sub: string
   return { icon: '🔄', label: `Turn ${turn.turn_index}`, sub: `${turn.total_steps} 步` };
 }
 
-// 质量分 → 颜色 & 标签
-function qualityColor(score?: number): string {
-  if (score == null) return '#64748b';
-  if (score >= 0.85) return '#10b981';
-  if (score >= 0.6)  return '#f59e0b';
-  return '#ef4444';
-}
-function qualityLabel(score?: number): string {
-  if (score == null) return '--';
-  return `${Math.round(score * 100)}`;
-}
-
 // ─── Step 类型配置 ────────────────────────────────────────
 const STEP_CFG: Record<string, { icon: string; color: string; label: string }> = {
   user_input:           { icon: '💬', color: '#3b82f6', label: 'User Input' },
@@ -2454,15 +2442,6 @@ export default function SpanTree({
     return fmtDuration(totalMs);
   }, [cot.turns]);
 
-  // 平均质量分（会话级聚合指标，便于左侧总览看出这次大会话整体回答水平）
-  const avgQuality = useMemo(() => {
-    const scores = cot.turns
-      .map(t => t.turn_quality_score)
-      .filter((v): v is number => typeof v === 'number');
-    if (!scores.length) return undefined;
-    return scores.reduce((a, b) => a + b, 0) / scores.length;
-  }, [cot.turns]);
-
   const isParent = cot.is_parent || (cot as any).sub_sessions?.length > 0;
   const subCount = (cot as any).sub_sessions?.length || 0;
 
@@ -2521,19 +2500,6 @@ export default function SpanTree({
             </span>
           )}
           {isParent && <span className="session-parent-badge">📂 {subCount} 次交互</span>}
-          {avgQuality != null && (
-            <span
-              className="tree-session-quality"
-              style={{
-                color: qualityColor(avgQuality),
-                borderColor: `${qualityColor(avgQuality)}55`,
-                background: `${qualityColor(avgQuality)}14`,
-              }}
-              title="全部子会话平均质量分"
-            >
-              ✓ {qualityLabel(avgQuality)}/100
-            </span>
-          )}
           {(cot.plan_timeline?.length ?? 0) > 0 && (
             <span
               className="tree-session-plan"

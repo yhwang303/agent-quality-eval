@@ -91,13 +91,6 @@ function shortModel(m?: string | null): string {
     .slice(0, 18);
 }
 
-function fmtCostUsd(usd: number | null | undefined): string {
-  if (usd == null) return '—';
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  if (usd < 1) return `$${usd.toFixed(3)}`;
-  return `$${usd.toFixed(2)}`;
-}
-
 function readBoolMap(key: string): Record<string, boolean> {
   try {
     return JSON.parse(localStorage.getItem(key) || '{}') || {};
@@ -155,26 +148,6 @@ function OtelMiniRow({ otel }: { otel: SessionOtelKpi }) {
       >
         🤖 {shortModel(otel.model)}
       </span>
-      {otel.cost_usd != null && otel.cost_usd > 0 && (
-        <span
-          className="session-otel-mini session-otel-mini-cost"
-          title={
-            otel.full_price_cost_usd && otel.full_price_cost_usd > otel.cost_usd
-              ? `cache-aware 实际花费 ${fmtCostUsd(otel.cost_usd)}\n全价对比 ${fmtCostUsd(otel.full_price_cost_usd)}（cache 帮你省了 ${fmtCostUsd(otel.full_price_cost_usd - otel.cost_usd)}）`
-              : `本会话累计花费（cache-aware）`
-          }
-        >
-          💰 {fmtCostUsd(otel.cost_usd)}
-        </span>
-      )}
-      {otel.cache_hit_rate != null && otel.cache_hit_rate > 0 && (
-        <span
-          className="session-otel-mini"
-          title={`cache 命中率 = cache_read / (non_cache_in + cache_read + cache_write)\n输入 ${otel.input_tokens} tok · 输出 ${otel.output_tokens} tok\ncache_read ${otel.cache_read_tokens} · cache_write ${otel.cache_write_tokens}`}
-        >
-          ⚡ {Math.round(otel.cache_hit_rate * 100)}%
-        </span>
-      )}
     </div>
   );
 }
@@ -314,7 +287,6 @@ export default function SessionList({ sessions, selectedId, onSelect, onDelete }
         <div className="session-item-stats">
           <span title="Turns">🔁 {s.total_turns}</span>
           <span title="工具调用">🔧 {s.total_tool_calls}</span>
-          <span title="复杂度">📊 {s.avg_complexity.toFixed(2)}</span>
         </div>
         {s.otel && <OtelMiniRow otel={s.otel} />}
         <div className="session-item-tools">
