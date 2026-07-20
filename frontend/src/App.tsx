@@ -1147,11 +1147,17 @@ function AbCompareDialog({
     mixed: '各有优劣',
     no_material_difference: '无显著差异',
   };
-  const winnerText: Record<string, string> = {
-    baseline: 'Base',
-    candidate: '候选',
-    tie: '持平',
-    unclear: '不明确',
+  const dimensionDecisionText = (item: any) => {
+    const winner = String(item?.winner || '').toLowerCase();
+    if (winner === 'baseline') return 'Base 更强';
+    if (winner === 'candidate') return '候选更强';
+    if (winner === 'tie') return '基本持平';
+    const verdict = String(item?.verdict || '').toLowerCase();
+    if (verdict === 'stronger') return '候选更强';
+    if (verdict === 'weaker') return 'Base 更强';
+    if (verdict === 'comparable') return '基本持平';
+    if (verdict === 'mixed') return '各有优劣';
+    return '不明确';
   };
   const regressionDimensionLabels: Record<string, string> = {
     capability_preservation: '能力保持',
@@ -1254,8 +1260,8 @@ function AbCompareDialog({
             const item = llmCompare[key] || {};
             return (
               <div className="ab-llm-dimension" key={key}>
-                <span>{dimensionLabels[key]} · {winnerText[item.winner] || item.winner || '不明确'}</span>
-                <strong>{item.verdict || 'unclear'}</strong>
+                <span>{dimensionLabels[key]} · {dimensionDecisionText(item)}</span>
+                <strong>{dimensionDecisionText(item)}</strong>
                 <p>{item.review || `该维度缺少可展示内容，请结合总体结论和下方确定性指标复核。`}</p>
                 <AbEvidenceBlock
                   baseline={item.baseline_evidence}

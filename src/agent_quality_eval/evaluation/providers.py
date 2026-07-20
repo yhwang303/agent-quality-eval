@@ -121,7 +121,8 @@ class OpenAICompatibleProvider(BaseProvider):
             response = requests.post(api_url, headers=headers, json=body, timeout=float(self.config.get("timeout", 120)))
             response.raise_for_status()
             data = response.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            choice = data.get("choices", [{}])[0]
+            content = choice.get("message", {}).get("content", "")
             usage = data.get("usage") or {}
             return ProviderResponse(
                 output=content,
@@ -135,6 +136,7 @@ class OpenAICompatibleProvider(BaseProvider):
                     },
                 ),
                 raw_response=data,
+                trace={"finish_reason": choice.get("finish_reason")},
             )
         except Exception as exc:
             return ProviderResponse(

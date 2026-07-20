@@ -47,7 +47,7 @@ class CriticSettings:
                 "model": self.model or "deepseek-v4-flash",
                 "threshold": 0.7,
                 "timeout": self.timeout,
-                "max_tokens": 4096,
+                "max_tokens": 8192,
                 "response_format": {"type": "json_object"},
             }
         return {
@@ -57,7 +57,7 @@ class CriticSettings:
             "model": self.model or "gpt-4o-mini",
             "threshold": 0.7,
             "timeout": self.timeout,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
             "response_format": {"type": "json_object"},
         }
 

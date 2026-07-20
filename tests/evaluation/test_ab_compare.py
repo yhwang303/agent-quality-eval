@@ -259,6 +259,125 @@ def test_turn_compare_errors_when_llm_repair_still_missing_dimensions(monkeypatc
     _AB_LLM_COMPARE_CACHE.clear()
 
 
+def test_turn_compare_repairs_initial_invalid_json(monkeypatch):
+    import agent_quality_eval.evaluation.providers as providers
+    import agent_quality_eval.evaluation.settings as settings
+
+    _AB_LLM_COMPARE_CACHE.clear()
+    provider = _Provider(["我先解释一下：这个报告如下", _completed_json()])
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
+    monkeypatch.setattr(providers, "load_provider", lambda config: provider)
+
+    result = _compare_turn_reports(
+        _report("base-invalid-json", passed=False, score=0.0),
+        _report("cand-invalid-json", passed=True, score=1.0),
+        baseline_context=_context("base-invalid-json"),
+        candidate_context=_context("cand-invalid-json"),
+    )
+
+    assert result["llm_compare"]["status"] == "completed"
+    assert result["llm_compare"]["token_usage"]["json_repair"]["total_tokens"] == 123
+    assert len(provider.calls) == 2
+    assert "没有返回可被 json.loads 解析" in provider.calls[1]
+    _AB_LLM_COMPARE_CACHE.clear()
+
+
+def test_turn_compare_reports_truncated_initial_invalid_json(monkeypatch):
+    import agent_quality_eval.evaluation.providers as providers
+    import agent_quality_eval.evaluation.settings as settings
+
+    class _TruncatedProvider(_Provider):
+        def call(self, input_text: str, **kwargs: Any) -> ProviderResponse:
+            response = super().call(input_text, **kwargs)
+            response.trace = {"finish_reason": "length"}
+            return response
+
+    _AB_LLM_COMPARE_CACHE.clear()
+    provider = _TruncatedProvider('{"comparison_verdict":"mixed"')
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
+    monkeypatch.setattr(providers, "load_provider", lambda config: provider)
+
+    result = _compare_turn_reports(
+        _report("base-truncated-json", passed=True, score=1.0),
+        _report("cand-truncated-json", passed=True, score=1.0),
+        baseline_context=_context("base-truncated-json"),
+        candidate_context=_context("cand-truncated-json"),
+    )
+
+    assert result["llm_compare"]["status"] == "error"
+    assert "输出被截断" in result["llm_compare"]["reason"]
+    assert result["llm_compare"]["finish_reason"] == "length"
+    assert "repair_raw_output" in result["llm_compare"]
+    _AB_LLM_COMPARE_CACHE.clear()
+
+
+def test_turn_compare_blind_verdict_infers_real_winner(monkeypatch):
+    import agent_quality_eval.evaluation.api as api_module
+    import agent_quality_eval.evaluation.providers as providers
+    import agent_quality_eval.evaluation.settings as settings
+
+    _AB_LLM_COMPARE_CACHE.clear()
+    baseline = _report("base-blind-winner", passed=True, score=1.0)
+    candidate = _report("cand-blind-winner", passed=True, score=1.0, tokens=80, tools=1)
+    baseline_side, candidate_side = api_module._blind_pair_assignment(baseline, candidate)
+    side_b_real_winner = "baseline" if baseline_side == "side_b" else "candidate"
+
+    data = {
+        "comparison_verdict": "side_b_better",
+        "summary_conclusion": "结论：Side B 整体更优。",
+        "user_request_coverage": "Side B 对用户诉求覆盖更好。",
+    }
+    for key in ("task_completion", "tool_use", "reasoning", "instruction_following", "faithfulness", "efficiency", "reliability"):
+        data[key] = {"verdict": "stronger", "winner": "unclear", "review": f"Side B 在 {key} 上更好。"}
+
+    provider = _Provider(json.dumps(data, ensure_ascii=False))
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
+    monkeypatch.setattr(providers, "load_provider", lambda config: provider)
+
+    result = _compare_turn_reports(
+        baseline,
+        candidate,
+        baseline_context=_context("base-blind-winner"),
+        candidate_context=_context("cand-blind-winner"),
+        blind=True,
+    )
+
+    assert result["llm_compare"]["status"] == "completed"
+    assert result["llm_compare"]["tool_use"]["winner"] == side_b_real_winner
+    assert result["llm_compare"]["tool_use"]["winner"] != "unclear"
+    _AB_LLM_COMPARE_CACHE.clear()
+
+
+def test_turn_compare_winner_overrides_conflicting_verdict(monkeypatch):
+    import agent_quality_eval.evaluation.providers as providers
+    import agent_quality_eval.evaluation.settings as settings
+
+    _AB_LLM_COMPARE_CACHE.clear()
+    data = {
+        "comparison_verdict": "baseline_better",
+        "summary_conclusion": "结论：Base 在推理路径和效率上更强。",
+        "user_request_coverage": "Base 和候选均覆盖核心诉求。",
+    }
+    for key in ("task_completion", "tool_use", "reasoning", "instruction_following", "faithfulness", "efficiency", "reliability"):
+        data[key] = {"verdict": "stronger", "winner": "baseline", "review": f"Base 在 {key} 上更强。"}
+    provider = _Provider(json.dumps(data, ensure_ascii=False))
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
+    monkeypatch.setattr(providers, "load_provider", lambda config: provider)
+
+    result = _compare_turn_reports(
+        _report("base-conflict-winner", passed=True, score=1.0, tokens=100, tools=1),
+        _report("cand-conflict-winner", passed=True, score=1.0, tokens=200, tools=3),
+        baseline_context=_context("base-conflict-winner"),
+        candidate_context=_context("cand-conflict-winner"),
+    )
+
+    assert result["llm_compare"]["reasoning"]["winner"] == "baseline"
+    assert result["llm_compare"]["reasoning"]["verdict"] == "weaker"
+    assert result["llm_compare"]["efficiency"]["winner"] == "baseline"
+    assert result["llm_compare"]["efficiency"]["verdict"] == "weaker"
+    _AB_LLM_COMPARE_CACHE.clear()
+
+
 def test_turn_compare_llm_disabled_does_not_break_numeric_compare(monkeypatch):
     import agent_quality_eval.evaluation.settings as settings
 
@@ -341,7 +460,12 @@ def _regression_completed_json(verdict: str = "PASS") -> str:
         "workflow_integrity",
         "efficiency_regression",
     ):
-        data[key] = {"verdict": "preserved", "review": f"{key} is supported by the eval evidence."}
+        data[key] = {
+            "verdict": "preserved",
+            "review": f"{key} is supported by distinct eval evidence for this regression gate.",
+            "baseline_evidence": [{"ref": f"assertion:{key}:baseline", "quote": f"baseline evidence for {key}", "source": "assertion"}],
+            "candidate_evidence": [{"ref": f"assertion:{key}:candidate", "quote": f"candidate evidence for {key}", "source": "assertion"}],
+        }
     return json.dumps(data, ensure_ascii=False)
 
 
@@ -373,6 +497,30 @@ def test_regression_mode_uses_regression_judge_not_ab_judge(monkeypatch):
     assert result["regression_gate"]["verdict"] == "PASS"
     assert result["regression_compare"]["status"] == "completed"
     assert "Agent 回归检测评审器" in provider.calls[0]
+    _REGRESSION_LLM_COMPARE_CACHE.clear()
+
+
+def test_regression_mode_repairs_initial_invalid_json(monkeypatch):
+    import agent_quality_eval.evaluation.providers as providers
+    import agent_quality_eval.evaluation.settings as settings
+
+    _REGRESSION_LLM_COMPARE_CACHE.clear()
+    provider = _Provider(["不是 JSON 的回归解释", _regression_completed_json("PASS")])
+    monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
+    monkeypatch.setattr(providers, "load_provider", lambda config: provider)
+
+    result = _compare_turn_reports(
+        _report("base-reg-invalid-json", passed=True, score=1.0),
+        _report("cand-reg-invalid-json", passed=True, score=1.0),
+        baseline_context=_context("base-reg-invalid-json"),
+        candidate_context=_context("cand-reg-invalid-json"),
+        mode="regression",
+    )
+
+    assert result["regression_compare"]["status"] == "completed"
+    assert result["regression_compare"]["token_usage"]["json_repair"]["total_tokens"] == 123
+    assert len(provider.calls) >= 2
+    assert "没有返回可被 json.loads 解析" in provider.calls[1]
     _REGRESSION_LLM_COMPARE_CACHE.clear()
 
 

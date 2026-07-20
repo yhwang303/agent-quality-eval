@@ -1617,6 +1617,37 @@ def _build_ab_compare_repair_prompt(compare_input: dict[str, Any], previous_outp
     )
 
 
+def _build_ab_compare_json_repair_prompt(compare_input: dict[str, Any], raw_output: str, *, blind: bool = False) -> str:
+    side_hint = "Side A / Side B" if blind else "Base / 候选"
+    return (
+        "你刚才执行 A/B 对比时没有返回可被 json.loads 解析的完整 JSON 对象。"
+        "请不要解释失败原因，也不要输出 Markdown，直接基于同一份输入重新生成完整 JSON。\n"
+        f"对比口径：{side_hint}。\n"
+        "硬性要求：必须包含 comparison_verdict、summary_conclusion、user_request_coverage，"
+        "以及 task_completion、tool_use、reasoning、instruction_following、faithfulness、efficiency、reliability 七个维度；"
+        "每个维度必须包含 verdict、winner、review 和两侧 evidence 数组。\n\n"
+        "【原始 A/B 对比输入】\n"
+        f"{json.dumps(compare_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "【上一次不可解析输出，供你尽量复用已写出的判断】\n"
+        f"{str(raw_output or '')[:12000]}\n\n"
+        "只返回一个完整 JSON 对象，第一字符必须是 {，最后一个字符必须是 }。"
+    )
+
+
+def _provider_finish_reason(response: Any) -> str:
+    trace = getattr(response, "trace", None)
+    if isinstance(trace, dict) and trace.get("finish_reason"):
+        return str(trace.get("finish_reason"))
+    raw_response = getattr(response, "raw_response", None)
+    if isinstance(raw_response, dict):
+        choices = raw_response.get("choices")
+        if isinstance(choices, list) and choices:
+            choice = choices[0] if isinstance(choices[0], dict) else {}
+            if choice.get("finish_reason"):
+                return str(choice.get("finish_reason"))
+    return ""
+
+
 def _ab_dimension(
     verdict: str = "unclear",
     winner: str = "unclear",
@@ -1625,7 +1656,7 @@ def _ab_dimension(
     candidate_evidence: Any = None,
 ) -> dict[str, Any]:
     clean_winner = str(winner or "unclear").strip().lower()
-    if clean_winner not in AB_COMPARE_WINNERS:
+    if clean_winner not in AB_COMPARE_WINNERS and clean_winner not in {"side_a", "side_b"}:
         clean_winner = "unclear"
     return {
         "verdict": str(verdict or "unclear").strip()[:80] or "unclear",
@@ -1768,7 +1799,50 @@ def _fallback_ab_llm_compare(
     return data
 
 
-def _normalize_ab_llm_compare(data: dict[str, Any]) -> dict[str, Any]:
+def _normalize_ab_verdict_winner(raw_verdict: str, raw_winner: str, *, blind: bool = False) -> tuple[str, str]:
+    verdict = str(raw_verdict or "").strip().lower()
+    winner = str(raw_winner or "").strip().lower()
+    if winner not in AB_COMPARE_WINNERS and winner not in {"side_a", "side_b"}:
+        winner = "unclear" if winner else ""
+
+    variant_map = {
+        "candidate_stronger": ("stronger", "candidate"),
+        "candidate_better": ("stronger", "candidate"),
+        "candidate_weaker": ("weaker", "baseline"),
+        "candidate_worse": ("weaker", "baseline"),
+        "baseline_stronger": ("weaker", "baseline"),
+        "baseline_better": ("weaker", "baseline"),
+        "baseline_weaker": ("stronger", "candidate"),
+        "baseline_worse": ("stronger", "candidate"),
+        "side_a_stronger": ("weaker", "side_a"),
+        "side_a_better": ("weaker", "side_a"),
+        "side_b_stronger": ("stronger", "side_b"),
+        "side_b_better": ("stronger", "side_b"),
+        "side_a_weaker": ("stronger", "side_b"),
+        "side_b_weaker": ("weaker", "side_a"),
+    }
+    if verdict in variant_map:
+        verdict, implied_winner = variant_map[verdict]
+        if winner in {"", "unclear"}:
+            winner = implied_winner
+
+    if winner in {"baseline", "candidate", "side_a", "side_b"}:
+        better_latter = winner == ("side_b" if blind else "candidate")
+        verdict = "stronger" if better_latter else "weaker"
+    elif winner in {"", "unclear"} and verdict in {"stronger", "weaker"}:
+        if blind:
+            winner = "side_b" if verdict == "stronger" else "side_a"
+        else:
+            winner = "candidate" if verdict == "stronger" else "baseline"
+
+    if verdict not in {"stronger", "weaker", "comparable", "mixed"}:
+        verdict = verdict or "unclear"
+    if winner not in AB_COMPARE_WINNERS and winner not in {"side_a", "side_b"}:
+        winner = "unclear"
+    return verdict, winner or "unclear"
+
+
+def _normalize_ab_llm_compare(data: dict[str, Any], *, blind: bool = False) -> dict[str, Any]:
     out: dict[str, Any] = {"status": "completed", "created_at": utc_now()}
     markdown_sections = _extract_review_markdown_sections(data.get("review_markdown"))
     verdict = str(data.get("comparison_verdict") or data.get("overall_verdict") or "mixed").strip()
@@ -1788,17 +1862,7 @@ def _normalize_ab_llm_compare(data: dict[str, Any]) -> dict[str, Any]:
     for key in AB_COMPARE_DIMENSIONS:
         raw = _lookup_ab_dimension_raw(data, key)
         review = _dimension_review_from_raw(raw, markdown_sections, key)
-        raw_verdict = str(raw.get("verdict") or "").strip().lower()
-        raw_winner = str(raw.get("winner") or "").strip().lower()
-        # Coerce verdict / winner to be internally consistent. If the model
-        # left one of them blank / "unclear" but the other clearly points at
-        # a side, mirror that decision so the frontend doesn't display "更差
-        # / stronger" alongside "不明确".
-        if raw_verdict in {"", "unclear"} and raw_winner in {"baseline", "candidate", "side_a", "side_b"}:
-            better_side = raw_winner in {"candidate", "side_b"}
-            raw_verdict = "stronger" if better_side else "weaker"
-        elif raw_winner in {"", "unclear"} and raw_verdict in {"stronger", "weaker"}:
-            raw_winner = "candidate" if raw_verdict == "stronger" else "baseline"
+        raw_verdict, raw_winner = _normalize_ab_verdict_winner(raw.get("verdict"), raw.get("winner"), blind=blind)
         # Evidence: accept baseline_/candidate_evidence, side_a_/side_b_
         # evidence (blind mode — will be remapped later in _unblind_ab_compare),
         # or a legacy single "evidence" list (route to both sides so the user
@@ -2410,17 +2474,52 @@ def _run_ab_llm_compare(
         )
     parsed = _extract_json_object(response.output)
     if parsed is None:
-        result = _fallback_ab_llm_compare(
-            status="error",
-            reason="Critic 模型未返回可解析 JSON。",
-            provider=settings.provider,
-            model=settings.model,
-            latency_ms=latency_ms,
-            token_usage=token_usage,
-        )
-        result["raw_output"] = str(response.output or "")[:2000]
-        return result
-    result = _normalize_ab_llm_compare(parsed)
+        repair_started = time.time()
+        repair_response = provider.call(_build_ab_compare_json_repair_prompt(compare_input, response.output, blind=blind))
+        latency_ms += int((time.time() - repair_started) * 1000)
+        if repair_response.performance and repair_response.performance.token_usage:
+            token_usage = {
+                **(token_usage or {}),
+                "json_repair": repair_response.performance.token_usage,
+            }
+        if not repair_response.error:
+            repaired = _extract_json_object(repair_response.output)
+            if repaired is not None:
+                parsed = repaired
+            else:
+                finish_reason = _provider_finish_reason(repair_response) or _provider_finish_reason(response)
+                reason = "Critic 模型未返回可解析 JSON，且 JSON 修复重试仍不可解析。"
+                if finish_reason in {"length", "max_tokens"}:
+                    reason = f"Critic 模型输出被截断（finish_reason={finish_reason}），JSON 修复重试仍不可解析。"
+                result = _fallback_ab_llm_compare(
+                    status="error",
+                    reason=reason,
+                    provider=settings.provider,
+                    model=settings.model,
+                    latency_ms=latency_ms,
+                    token_usage=token_usage,
+                )
+                result["raw_output"] = str(response.output or "")[:2000]
+                result["repair_raw_output"] = str(repair_response.output or "")[:2000]
+                result["finish_reason"] = finish_reason
+                return result
+        else:
+            reason = f"Critic 模型未返回可解析 JSON，且 JSON 修复重试失败：{repair_response.error}"
+            finish_reason = _provider_finish_reason(response)
+            if finish_reason in {"length", "max_tokens"}:
+                reason = f"Critic 模型输出被截断（finish_reason={finish_reason}），且 JSON 修复重试失败：{repair_response.error}"
+            result = _fallback_ab_llm_compare(
+                status="error",
+                reason=reason,
+                provider=settings.provider,
+                model=settings.model,
+                latency_ms=latency_ms,
+                token_usage=token_usage,
+            )
+            result["raw_output"] = str(response.output or "")[:2000]
+            result["finish_reason"] = finish_reason
+            return result
+    result = _normalize_ab_llm_compare(parsed, blind=blind)
     missing_fields = _missing_ab_llm_compare_fields(result)
     if missing_fields:
         repair_started = time.time()
@@ -2455,7 +2554,7 @@ def _run_ab_llm_compare(
             error_result["missing_fields"] = missing_fields
             error_result["raw_output"] = str(repair_response.output or "")[:2000]
             return error_result
-        result = _normalize_ab_llm_compare(repaired)
+        result = _normalize_ab_llm_compare(repaired, blind=blind)
         missing_fields = _missing_ab_llm_compare_fields(result)
         if missing_fields:
             error_result = _fallback_ab_llm_compare(
@@ -2480,7 +2579,7 @@ def _run_ab_llm_compare(
         if not dedup_response.error:
             deduped = _extract_json_object(dedup_response.output)
             if deduped is not None:
-                result = _normalize_ab_llm_compare(deduped)
+                result = _normalize_ab_llm_compare(deduped, blind=blind)
                 collisions = _find_cross_dimension_duplicates(result, AB_COMPARE_DIMENSIONS, ab_evidence_keys)
     if collisions:
         # Repair round either failed or the model repeated the mistake — never
@@ -2945,6 +3044,23 @@ def _build_regression_dedup_repair_prompt(
     )
 
 
+def _build_regression_json_repair_prompt(compare_input: dict[str, Any], raw_output: str) -> str:
+    return (
+        "你刚才执行回归检测时没有返回可被 json.loads 解析的完整 JSON 对象。"
+        "请不要解释失败原因，也不要输出 Markdown，直接基于同一份输入重新生成完整 JSON。\n"
+        "硬性要求：必须包含 gate_verdict、summary_conclusion、blocking_reasons、warning_reasons、"
+        "preserved_capabilities、new_regressions、manual_review_notes，"
+        "以及 capability_preservation、user_goal_coverage、behavioral_change_risk、"
+        "evidence_faithfulness、workflow_integrity、efficiency_regression 六个维度；"
+        "每个维度必须包含 verdict、review、baseline_evidence、candidate_evidence。\n\n"
+        "【原始回归检测输入】\n"
+        f"{json.dumps(compare_input, ensure_ascii=False, indent=2, default=str)}\n\n"
+        "【上一次不可解析输出，供你尽量复用已写出的判断】\n"
+        f"{str(raw_output or '')[:12000]}\n\n"
+        "只返回一个完整 JSON 对象，第一字符必须是 {，最后一个字符必须是 }。"
+    )
+
+
 def _run_regression_llm_compare(
     baseline: dict[str, Any],
     candidate: dict[str, Any],
@@ -3006,17 +3122,53 @@ def _run_regression_llm_compare(
         )
     parsed = _extract_json_object(response.output)
     if parsed is None:
-        result = _fallback_regression_compare(
-            status="error",
-            reason="Critic 模型没有返回可解析 JSON。",
-            deterministic_gate=deterministic_gate,
-            provider=settings.provider,
-            model=settings.model,
-            latency_ms=latency_ms,
-            token_usage=token_usage,
-        )
-        result["raw_output"] = str(response.output or "")[:2000]
-        return result
+        repair_started = time.time()
+        repair_response = provider.call(_build_regression_json_repair_prompt(compare_input, response.output))
+        latency_ms += int((time.time() - repair_started) * 1000)
+        if repair_response.performance and repair_response.performance.token_usage:
+            token_usage = {
+                **(token_usage or {}),
+                "json_repair": repair_response.performance.token_usage,
+            }
+        if not repair_response.error:
+            repaired = _extract_json_object(repair_response.output)
+            if repaired is not None:
+                parsed = repaired
+            else:
+                finish_reason = _provider_finish_reason(repair_response) or _provider_finish_reason(response)
+                reason = "Critic 模型没有返回可解析 JSON，且 JSON 修复重试仍不可解析。"
+                if finish_reason in {"length", "max_tokens"}:
+                    reason = f"Critic 模型输出被截断（finish_reason={finish_reason}），JSON 修复重试仍不可解析。"
+                result = _fallback_regression_compare(
+                    status="error",
+                    reason=reason,
+                    deterministic_gate=deterministic_gate,
+                    provider=settings.provider,
+                    model=settings.model,
+                    latency_ms=latency_ms,
+                    token_usage=token_usage,
+                )
+                result["raw_output"] = str(response.output or "")[:2000]
+                result["repair_raw_output"] = str(repair_response.output or "")[:2000]
+                result["finish_reason"] = finish_reason
+                return result
+        else:
+            finish_reason = _provider_finish_reason(response)
+            reason = f"Critic 模型没有返回可解析 JSON，且 JSON 修复重试失败：{repair_response.error}"
+            if finish_reason in {"length", "max_tokens"}:
+                reason = f"Critic 模型输出被截断（finish_reason={finish_reason}），且 JSON 修复重试失败：{repair_response.error}"
+            result = _fallback_regression_compare(
+                status="error",
+                reason=reason,
+                deterministic_gate=deterministic_gate,
+                provider=settings.provider,
+                model=settings.model,
+                latency_ms=latency_ms,
+                token_usage=token_usage,
+            )
+            result["raw_output"] = str(response.output or "")[:2000]
+            result["finish_reason"] = finish_reason
+            return result
     result = _normalize_regression_compare(parsed, deterministic_gate)
 
     # capability_preservation has a fully code-computed ground truth; ground it

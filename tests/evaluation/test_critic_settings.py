@@ -36,3 +36,4 @@ def test_deprecated_deepseek_model_falls_back_to_v4(tmp_path: Path, monkeypatch)
     assert loaded.provider == "deepseek"
     assert loaded.model == "deepseek-v4-flash"
     assert loaded.to_provider_config()["model"] == "deepseek-v4-flash"
+    assert loaded.to_provider_config()["max_tokens"] == 8192
