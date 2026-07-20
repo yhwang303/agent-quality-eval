@@ -591,9 +591,9 @@ body {
   margin-left: auto;     /* 时间始终贴卡片右缘 */
 }
 
-/* v0.20.7: IDE 来源徽章 —— 替代废弃的「无报告」占位，三家品牌色低饱和。
-   柔和色板基准：以原色 (cursor=#94a3b8 / claude=#d97757 / codebuddy=#14b8a6 /
-   vscode=#0ea5e9) 拉透明度到 12% 做底、25% 做边、文字保留 high-saturation
+/* v0.20.7: IDE 来源徽章 —— 替代废弃的「无报告」占位，品牌色低饱和。
+   柔和色板基准：以原色 (cursor=#94a3b8 / claude=#d97757 / codebuddy=#14b8a6)
+   拉透明度到 12% 做底、25% 做边、文字保留 high-saturation
    方便在深色背景下识别。 */
 .ide-badge {
   display: inline-flex;
@@ -627,11 +627,6 @@ body {
   background: rgba(20, 184, 166, 0.12);
   border-color: rgba(20, 184, 166, 0.30);
 }
-.ide-badge-vscode {
-  color: #93c5fd;
-  background: rgba(14, 165, 233, 0.12);
-  border-color: rgba(14, 165, 233, 0.30);
-}
 .ide-badge-unknown {
   color: var(--text-3);
   background: var(--bg-3);
@@ -644,7 +639,6 @@ body {
 .session-item.ide-card-claude    { border-left-color: rgba(217, 119, 87, 0.50); }
 .session-item.ide-card-codex     { border-left-color: rgba(250, 204, 21, 0.55); }
 .session-item.ide-card-codebuddy { border-left-color: rgba(20, 184, 166, 0.50); }
-.session-item.ide-card-vscode    { border-left-color: rgba(14, 165, 233, 0.50); }
 .session-item.selected { border-left-color: var(--bg-selected-border); }
 
 .session-item-stats {
@@ -6178,7 +6172,6 @@ body {
 .otel-badge-warn    { background: rgba(245, 158, 11, 0.18);  color: #fcd34d; border-color: rgba(245, 158, 11, 0.4); }
 .otel-badge-bad     { background: rgba(239, 68, 68, 0.18);   color: #fca5a5; border-color: rgba(239, 68, 68, 0.4); }
 /* v0.17.0 多 IDE 徽章 */
-.otel-badge-vscode    { background: rgba(0, 122, 204, 0.20);  color: #7cc7ff; border-color: rgba(0, 122, 204, 0.5); }
 .otel-badge-codebuddy { background: rgba(168, 85, 247, 0.20); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.5); }
 
 /* Tables */
@@ -9356,6 +9349,76 @@ body {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.reference-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reference-normalization-status,
+.reference-mapping-panel,
+.reference-normalization-warnings {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.32);
+  padding: 12px;
+}
+
+.reference-normalization-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.reference-normalization-status strong,
+.reference-mapping-panel > strong {
+  color: #ccfbf1;
+  font-size: 13px;
+}
+
+.reference-normalization-status span,
+.reference-mapping-panel > span {
+  color: rgba(203, 213, 225, 0.74);
+  font-size: 12px;
+}
+
+.reference-mapping-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.reference-mapping-panel > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 12px;
+}
+
+.reference-mapping-panel code {
+  overflow: hidden;
+  color: rgba(226, 232, 240, 0.94);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-normalization-warnings {
+  display: grid;
+  gap: 6px;
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(120, 53, 15, 0.14);
+  color: #fde68a;
+  font-size: 12px;
+}
+
+@media (max-width: 780px) {
+  .reference-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
 }
 
 .reference-empty {

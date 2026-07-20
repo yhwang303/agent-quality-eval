@@ -758,15 +758,12 @@ def _guess_agent_type(session_id: str, cot_data: Dict) -> str:
 
     判定顺序（高置信度在前）：
       1. session_id 以 ``codebuddy-`` 前缀 → codebuddy
-      2. session_id 以 ``vscode-`` 前缀 → vscode (Copilot)
-      3. otel.model 以 ``claude-`` 开头 / provider=anthropic → claude
-      4. 兜底 → cursor（历史最常见）
+      2. otel.model 以 ``claude-`` 开头 / provider=anthropic → claude
+      3. 兜底 → cursor（历史最常见）
     """
     sid = (session_id or "").lower()
     if sid.startswith("codebuddy-"):
         return "codebuddy"
-    if sid.startswith("vscode-"):
-        return "vscode"
     otel = (cot_data.get("session_otel") or {}) if isinstance(cot_data, dict) else {}
     model = (otel.get("model") or "").lower() if isinstance(otel, dict) else ""
     provider = (otel.get("provider") or "").lower() if isinstance(otel, dict) else ""

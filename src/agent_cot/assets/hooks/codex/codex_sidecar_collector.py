@@ -4,7 +4,7 @@
 This is intentionally transcript-first.  Codex already keeps structured local
 rollouts under ``$CODEX_HOME/sessions``; the hook uses this sidecar to convert
 that native transcript into the dashboard schema without touching Cursor,
-Claude, CodeBuddy, or VSCode paths.
+Claude or CodeBuddy paths.
 """
 
 from __future__ import annotations
@@ -335,14 +335,24 @@ def _canonical_tool_name(name: str, args: Any = None) -> str:
     low = raw.lower()
     if low == "update_plan":
         return "TodoWrite"
+    if low == "exec_command":
+        if isinstance(args, dict):
+            shell = str(args.get("shell") or "").strip().lower()
+            if shell:
+                return shell
+        return "shell"
     if low in {"shell_command", "bash", "shell"}:
-        return "Bash"
+        return low
+    if low == "write_stdin":
+        return "write"
+    if low.startswith("read_") or low == "read_thread_terminal":
+        return "read"
     if low == "apply_patch":
-        return "ApplyPatch"
+        return "apply_patch"
     if low in {"web_search", "web_search_call"}:
-        return "WebSearch"
+        return "web_search"
     if low in {"js", "node_repl"} or "node_repl" in low or low.endswith(".js"):
-        return "NodeREPL"
+        return "node_repl"
     return raw or "Tool"
 
 

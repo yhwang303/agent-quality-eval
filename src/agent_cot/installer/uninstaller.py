@@ -32,7 +32,6 @@ from pathlib import Path
 
 from .claude_hooks_merger import merge_claude_hooks
 from .codebuddy_hooks_merger import merge_codebuddy_hooks
-from .copilot_hooks_merger import merge_copilot_hooks
 from .hooks_merger import OWNED_HOOK_SCRIPTS, is_owned_command, merge_cursor_hooks
 from .platform_paths import backup_path
 
@@ -44,13 +43,12 @@ from .platform_paths import backup_path
 # Cursor has a flat hook schema (``hooks.<event> = [{type, command}, ...]``)
 # while CodeBuddy and Claude store hooks in a nested
 # ``hooks.<event> = [{"matcher": "...", "hooks": [{type, command}]}]`` shape.
-# Copilot has yet another (close to cursor but with extras). Each shape
-# has its own merger module that knows how to strip *only* our own
+# Each shape has its own merger module that knows how to strip *only* our own
 # commands while leaving every third-party hook intact.
 #
 # Before 0.19.4 ``apply_uninstall_plan`` unconditionally invoked
 # ``merge_cursor_hooks(existing, additions=[])``. On a CodeBuddy /
-# Claude / Copilot ``settings.json`` that meant the file passed through
+# Claude ``settings.json`` that meant the file passed through
 # unchanged — we deleted our hook *scripts* on disk but left their
 # absolute paths inside ``settings.json``, leaving stale references that
 # now point at missing files. ``agent-cot uninstall`` looked like it
@@ -68,9 +66,7 @@ def _resolve_merger(agent_name: str | None):
         return merge_codebuddy_hooks
     if name in ("claude", "claude-internal", "claude_internal", "claude-code", "claude_code"):
         return merge_claude_hooks
-    if name == "copilot":
-        return merge_copilot_hooks
-    # Cursor / VSCode / unknown — use the flat schema merger.
+    # Cursor / unknown — use the flat schema merger.
     return merge_cursor_hooks
 
 # ---------------------------------------------------------------------------

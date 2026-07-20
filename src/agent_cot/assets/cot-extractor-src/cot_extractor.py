@@ -1660,7 +1660,7 @@ def _enrich_observability(
 
 # ─── v0.7.0: Cursor 细粒度事件（cot-stream.js 产出）合并 ──────
 
-_EVENT_PROVIDER_PREFIXES = ("codebuddy-", "vscode-")
+_EVENT_PROVIDER_PREFIXES = ("codebuddy-",)
 
 
 def _load_cursor_events(session_id: str) -> List[Dict]:
@@ -1679,7 +1679,7 @@ def _load_cursor_events(session_id: str) -> List[Dict]:
        —— v0.17 ~ v0.18.4 的旧路径；保留只为了不让升级前生成的旧 events
        立即消失。源码态 dev 跑 extractor 也走这一档。
 
-    多 IDE 接入后，CodeBuddy/VSCode 会给目录加 provider 前缀，这里会同时
+    多 IDE 接入后，CodeBuddy 会给目录加 provider 前缀，这里会同时
     尝试裸 sid 与已知前缀目录，避免 hook 已落盘但 extractor 读不到。
     返回按 wall-clock 升序排列的事件列表。文件不存在或解析失败都返回空列表，
     不抛异常——这一步失败只意味着"没有实时流数据"，不应该影响主提取。
@@ -1749,10 +1749,6 @@ def _detect_agent_type_from_events(events: List[Dict]) -> Optional[str]:
         "SubagentStart", "SubagentStop", "TaskCreated", "TaskCompleted",
         "StopFailure", "PreCompact", "PostCompact",
     }
-    vscode_events = {
-        "AfterToolUse", "BeforeToolUse", "BeforeShellExecution",
-        "AfterShellExecution", "SessionStart", "SessionEnd",
-    }
     # v0.18.7: Cursor 自家 hook 写出来的事件名（lower-camel-case，区别于
     # Claude / CodeBuddy 的 PascalCase）。Cursor v2.6+ transcript 不再含
     # tool_use 块，所以 _detect_agent_type(msgs) 会返回 unknown，导致 OTel
@@ -1788,8 +1784,6 @@ def _detect_agent_type_from_events(events: List[Dict]) -> Optional[str]:
         )
         if "codebuddy" in blob or event in codebuddy_events:
             return "codebuddy"
-        if "vscode" in blob or "copilot" in blob or event in vscode_events:
-            return "vscode"
         if "cursor" in blob or "cursor_version" in payload or event in cursor_events:
             return "cursor"
     return None
@@ -5001,14 +4995,6 @@ def _detect_agent_type(msgs: List[Dict]) -> str:
         - 行级出现 ``cursor_request_id`` / ``cursor_session_id``
         - user message 内嵌 ``<hooks_context>`` 标签
 
-      VSCode/Copilot 信号（v0.17.0 加）：
-        - 行级出现 ``chat.session.id`` / ``copilot.session.id`` / ``copilotSessionId``
-        - assistant message 含 ``copilot_request_id`` 或 model 以 ``gpt-`` / ``o1-`` 开头
-          且同时带 ``copilot``/`vscode``/`github-copilot`` 关键字（service.name 或 source）
-        - hook payload 中事件名是 PascalCase 且含 ``AfterToolUse`` / ``Stop`` 等
-          GitHub Agent hooks Preview 标志
-        - source/origin 字段含 ``vscode`` / ``github-copilot``
-
       CodeBuddy 信号（v0.17.0 加，待 Phase 3 实物校准）：
         - 行级出现 ``codebuddy_*`` 前缀字段
         - source/origin 含 ``codebuddy`` / ``code-buddy`` / 腾讯云相关标志
@@ -5019,7 +5005,6 @@ def _detect_agent_type(msgs: List[Dict]) -> str:
         return "unknown"
     claude_score = 0
     cursor_score = 0
-    vscode_score = 0
     codebuddy_score = 0
 
     def _shallow_text(o, depth=0) -> str:
@@ -5050,12 +5035,6 @@ def _detect_agent_type(msgs: List[Dict]) -> str:
         # ── Cursor ──
         if any(k in m for k in ("cursor_request_id", "cursor_session_id", "generation_id")):
             cursor_score += 2
-        # ── VSCode / Copilot ──
-        if any(k in m for k in (
-            "chat_session_id", "chatSessionId",
-            "copilot_session_id", "copilotSessionId", "copilot_request_id",
-        )):
-            vscode_score += 2
         # ── CodeBuddy ──
         if any(k in m for k in (
             "codebuddy_session_id", "codebuddySessionId",
@@ -5069,10 +5048,6 @@ def _detect_agent_type(msgs: List[Dict]) -> str:
             ml = model.lower()
             if ml.startswith("claude-"):
                 claude_score += 1
-            # GPT-* / o1 / o3 + Copilot 上下文 → vscode
-            if (ml.startswith("gpt-") or ml.startswith("o1") or ml.startswith("o3")) and \
-               any(tok in str(m).lower() for tok in ("copilot", "vscode", "github-copilot")):
-                vscode_score += 1
         usage = msg.get("usage") or {}
         if isinstance(usage, dict) and (
             "cache_creation_input_tokens" in usage
@@ -5085,8 +5060,6 @@ def _detect_agent_type(msgs: List[Dict]) -> str:
         # source / origin 兜底（行级 IDE 标识）
         haystack = _shallow_text({k: m.get(k) for k in ("source", "origin", "agent", "service") if k in m})
         if haystack:
-            if "copilot" in haystack or "vscode" in haystack or "github-copilot" in haystack:
-                vscode_score += 1
             if "codebuddy" in haystack or "code-buddy" in haystack:
                 codebuddy_score += 1
             if "cursor" in haystack:
@@ -5098,7 +5071,6 @@ def _detect_agent_type(msgs: List[Dict]) -> str:
     scores = {
         "claude": claude_score,
         "cursor": cursor_score,
-        "vscode": vscode_score,
         "codebuddy": codebuddy_score,
     }
     winner = max(scores, key=lambda k: scores[k])

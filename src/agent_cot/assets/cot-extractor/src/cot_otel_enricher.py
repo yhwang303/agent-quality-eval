@@ -394,8 +394,8 @@ def _events_jsonl_path(session_id: str) -> Optional[str]:
       4. ``<enricher_file>/../output/events/<sid>/events.jsonl``  —— 源码态 dev。
       5. ``./output/events/<sid>/events.jsonl``  —— cwd 兜底。
 
-    多 IDE 接入（CodeBuddy / VSCode / Claude）也尝试 provider 前缀目录
-    （``codebuddy-<sid>`` / ``vscode-<sid>`` / ``claude-<sid>``），跟
+    多 IDE 接入（CodeBuddy / Claude）也尝试 provider 前缀目录
+    （``codebuddy-<sid>`` / ``claude-<sid>``），跟
     ``_load_cursor_events`` 的 ``_EVENT_PROVIDER_PREFIXES`` 同款。
     """
     bases: List[str] = []
@@ -423,7 +423,7 @@ def _events_jsonl_path(session_id: str) -> Optional[str]:
     # 多 IDE 前缀（跟 cot_extractor._EVENT_PROVIDER_PREFIXES 对齐；这里硬
     # 编码而不是 import，是为了让 enricher 完全独立、不引入 cot_extractor 的
     # 大模块依赖 —— enricher 在 backend / langfuse exporter 里也会被单独 import。）
-    PROVIDER_PREFIXES = ("codebuddy-", "vscode-", "claude-", "copilot-")
+    PROVIDER_PREFIXES = ("codebuddy-", "claude-")
 
     candidates: List[str] = []
     seen: set = set()

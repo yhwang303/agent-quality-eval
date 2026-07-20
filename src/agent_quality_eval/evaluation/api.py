@@ -78,6 +78,15 @@ class TurnReferenceAnswerUploadRequest(BaseModel):
     content: str
 
 
+class TurnReferenceAnswerPreviewRequest(TurnReferenceAnswerUploadRequest):
+    session_id: str | None = None
+    turn_index: int | None = None
+
+
+class TurnReferenceAnswerConfirmRequest(BaseModel):
+    confirm_token: str
+
+
 class ReferenceEvalRequest(BaseModel):
     session_id: str
     turn_index: int
@@ -259,17 +268,30 @@ def compare_api(body: CompareRequest) -> dict[str, Any]:
 
 @router.post("/turn-compare")
 def compare_turns_api(body: TurnCompareRequest) -> dict[str, Any]:
-    baseline = _build_or_load_turn_eval(body.baseline.session_id, body.baseline.turn_index, body.db_path)
-    candidate = _build_or_load_turn_eval(body.candidate.session_id, body.candidate.turn_index, body.db_path)
     baseline_context = _load_turn_source_context(body.baseline.session_id, body.baseline.turn_index)
     candidate_context = _load_turn_source_context(body.candidate.session_id, body.candidate.turn_index)
+    reference_answer = body.reference_answer if body.mode == "regression" else None
+    baseline = _build_or_load_turn_eval(
+        body.baseline.session_id,
+        body.baseline.turn_index,
+        body.db_path,
+        reference_answer=reference_answer,
+        source_context=baseline_context,
+    )
+    candidate = _build_or_load_turn_eval(
+        body.candidate.session_id,
+        body.candidate.turn_index,
+        body.db_path,
+        reference_answer=reference_answer,
+        source_context=candidate_context,
+    )
     result = _compare_turn_reports(
         baseline,
         candidate,
         baseline_context=baseline_context,
         candidate_context=candidate_context,
         mode=body.mode,
-        reference_answer=body.reference_answer if body.mode == "regression" else None,
+        reference_answer=reference_answer,
         blind=bool(body.blind) and body.mode == "ab",
     )
     _record_compare_eval_event(
@@ -277,7 +299,7 @@ def compare_turns_api(body: TurnCompareRequest) -> dict[str, Any]:
         result,
         baseline_context=baseline_context,
         candidate_context=candidate_context,
-        reference_answer=body.reference_answer if body.mode == "regression" else None,
+        reference_answer=reference_answer,
     )
     return result
 
@@ -412,16 +434,18 @@ def get_turn_reference_answer_api(session_id: str, turn_index: int) -> dict[str,
 def save_turn_reference_answer_api(
     session_id: str,
     turn_index: int,
-    body: TurnReferenceAnswerUploadRequest,
+    body: TurnReferenceAnswerConfirmRequest,
 ) -> dict[str, Any]:
-    from .reference_eval import save_turn_reference_answer
+    from .reference_eval import confirm_turn_reference_answer
 
-    if not body.filename.strip():
-        raise HTTPException(status_code=400, detail="filename is required")
-    if not body.content.strip():
-        raise HTTPException(status_code=400, detail="reference answer content is empty")
+    if not body.confirm_token.strip():
+        raise HTTPException(status_code=400, detail="confirm_token is required")
     try:
-        result = save_turn_reference_answer(session_id, turn_index, body.filename, body.content)
+        result = confirm_turn_reference_answer(
+            session_id,
+            turn_index,
+            body.confirm_token,
+        )
         _record_gold_binding_event(DatasetStore(), result)
         return result
     except (ValueError, json.JSONDecodeError) as exc:
@@ -437,15 +461,20 @@ def delete_turn_reference_answer_api(session_id: str, turn_index: int) -> dict[s
 
 
 @router.post("/reference-answer/normalize")
-def normalize_reference_answer_api(body: TurnReferenceAnswerUploadRequest) -> dict[str, Any]:
-    from .reference_eval import normalize_reference_upload
+def normalize_reference_answer_api(body: TurnReferenceAnswerPreviewRequest) -> dict[str, Any]:
+    from .reference_eval import preview_reference_upload
 
     if not body.filename.strip():
         raise HTTPException(status_code=400, detail="filename is required")
     if not body.content.strip():
         raise HTTPException(status_code=400, detail="reference answer content is empty")
     try:
-        return normalize_reference_upload(body.filename, body.content)
+        return preview_reference_upload(
+            body.filename,
+            body.content,
+            session_id=body.session_id,
+            turn_index=body.turn_index,
+        )
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -547,7 +576,11 @@ def eval_observed_turn(session_id: str, turn_index: int, db_path: str | None = N
     bound_reference = load_turn_reference_answer(session_id, turn_index)
     reference_answer = (
         bound_reference.get("reference_answer")
-        if isinstance(bound_reference, dict) and isinstance(bound_reference.get("reference_answer"), dict)
+        if (
+            isinstance(bound_reference, dict)
+            and bound_reference.get("eval_mode", "gold") == "gold"
+            and isinstance(bound_reference.get("reference_answer"), dict)
+        )
         else None
     )
     try:
@@ -611,6 +644,17 @@ def eval_observed_turn(session_id: str, turn_index: int, db_path: str | None = N
     if reference_answer:
         report["reference_answer_bound"] = True
         report["reference_answer"] = reference_answer
+    report["eval_mode"] = (
+        str(bound_reference.get("eval_mode") or "gold")
+        if isinstance(bound_reference, dict)
+        else "generic"
+    )
+    report["gold_binding_hash"] = (
+        str(bound_reference.get("binding_hash") or _reference_hash(reference_answer) or "")
+        if isinstance(bound_reference, dict)
+        else ""
+    )
+    report["turn_source_hash"] = _turn_eval_source_hash(_turn_from_cot(cot, turn_index))
     store = DatasetStore(db_path)
     store.save_turn_eval(report)
     _record_turn_eval_event(store, report, overview=overview, reference_answer=reference_answer)
@@ -980,23 +1024,43 @@ def _record_compare_eval_event(
     )
 
 
-def _build_or_load_turn_eval(session_id: str, turn_index: int, db_path: str | None = None) -> dict[str, Any]:
+def _build_or_load_turn_eval(
+    session_id: str,
+    turn_index: int,
+    db_path: str | None = None,
+    *,
+    reference_answer: dict[str, Any] | None = None,
+    source_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     store = DatasetStore(db_path)
     existing = store.get_latest_turn_eval(session_id, turn_index)
-    if existing:
+    expected_gold_hash = _reference_hash(reference_answer) or ""
+    context = source_context or _load_turn_source_context(session_id, turn_index)
+    expected_source_hash = _turn_eval_source_hash(context.get("turn"))
+    if (
+        existing
+        and str(existing.get("gold_binding_hash") or "") == expected_gold_hash
+        and str(existing.get("turn_source_hash") or "") == expected_source_hash
+    ):
         return existing
-    try:
-        from services.session_scanner import get_session_cot, get_session_transcript, scan_sessions  # type: ignore
-        from services.claude_otel_receiver import load_session_otel  # type: ignore
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"session services unavailable: {exc}") from exc
-
-    cot = get_session_cot(session_id)
-    transcript = get_session_transcript(session_id)
-    otel = load_session_otel(session_id)
-    if cot is None and transcript is None and not otel:
+    cot = context.get("cot") if isinstance(context.get("cot"), dict) else {}
+    transcript = context.get("transcript") if isinstance(context.get("transcript"), dict) else {}
+    otel = context.get("otel") if isinstance(context.get("otel"), dict) else {}
+    overview = context.get("overview") if isinstance(context.get("overview"), dict) else {}
+    if not context.get("available") and not cot and not transcript and not otel:
         raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
-    overview = _find_session_overview(scan_sessions(), session_id)
+    if reference_answer:
+        from .critic import run_critic_for_cot
+
+        run_critic_for_cot(
+            cot,
+            session_id=session_id,
+            turn_index=turn_index,
+            agent_type=str(cot.get("agent_type") or "manual"),
+            source_event="regression-reference-eval",
+            persist_eval=False,
+            reference_answer=reference_answer,
+        )
     try:
         report = build_turn_eval_report(
             session_id,
@@ -1008,8 +1072,21 @@ def _build_or_load_turn_eval(session_id: str, turn_index: int, db_path: str | No
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    report["gold_binding_hash"] = expected_gold_hash
+    report["turn_source_hash"] = expected_source_hash
+    report["eval_mode"] = "gold" if reference_answer else "generic"
+    if reference_answer:
+        report["reference_answer_bound"] = True
+        report["reference_answer"] = reference_answer
     store.save_turn_eval(report)
     return report
+
+
+def _turn_eval_source_hash(turn: Any) -> str:
+    if not isinstance(turn, dict) or not turn:
+        return ""
+    material = json.dumps(turn, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(material.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
 AB_COMPARE_DIMENSIONS = (

@@ -104,9 +104,8 @@ def _ns_to_iso(nanos_str: Any) -> Optional[str]:
 #  落盘工具
 # ════════════════════════════════════════════════════════════
 
-# v0.17.0: 多 IDE 支持。OTLP receiver 不再绑定 Claude Code 一家——
-# VSCode Copilot / CodeBuddy 之类只要走 OTLP/HTTP/JSON 也能落到这里。
-# session id 字段可能叫 session.id（Claude）/ chat.session.id（Copilot）/
+# 多 IDE 支持。OTLP receiver 不再绑定 Claude Code 一家。
+# session id 字段可能叫 session.id（Claude）/
 # gen_ai.conversation.id（OTel GenAI 语义约定标准字段）/ session_uuid（自定义）等，
 # 这里把 fallback 字段集合扩到所有已知形态。
 _SESSION_ID_KEYS = (
@@ -117,10 +116,6 @@ _SESSION_ID_KEYS = (
     # OTel GenAI 语义约定（OpenTelemetry semantic conventions for GenAI）
     "gen_ai.conversation.id",
     "gen_ai.session.id",
-    # GitHub Copilot Chat 风格（agent_monitoring.md）
-    "chat.session.id",
-    "copilot.session.id",
-    "copilot.chat.session.id",
     # CodeBuddy 推测
     "codebuddy.session.id",
     # Codex native OTel / rollout-adjacent shapes
@@ -150,7 +145,7 @@ def _resolve_session_id(*attr_dicts: Dict[str, Any]) -> Optional[str]:
 
 def _resolve_provider_tag(*attr_dicts: Dict[str, Any]) -> Optional[str]:
     """根据 OTLP 上报方的 service.name / gen_ai.system / scope 等，识别它是
-    哪个 IDE/agent。返回值会作为 session 目录前缀（vscode-<sid> / codebuddy-<sid>），
+    哪个 IDE/agent。返回值会作为 session 目录前缀（codebuddy-<sid>），
     避免不同 IDE 同 session id 撞车，也方便 list_otel_sessions 区分来源。
 
     返回 None 表示「Claude Code 或未识别」——保持 ~/.claude/state/otel/<sid>/
@@ -181,10 +176,6 @@ def _resolve_provider_tag(*attr_dicts: Dict[str, Any]) -> Optional[str]:
         return None  # 向后兼容：Claude 不加前缀
     if "codex" in blob or "openai-codex" in blob:
         return "codex"
-    if "copilot" in blob or "github-copilot" in blob:
-        return "vscode"
-    if "vscode" in blob and "copilot" not in blob:
-        return "vscode"
     if "codebuddy" in blob or "code-buddy" in blob:
         return "codebuddy"
     return None
@@ -542,8 +533,8 @@ def load_session_otel(session_id: str) -> Dict[str, Any]:
     if not sid:
         return {"session_id": "", "events": [], "metrics": [], "spans": [], "summary": {}, "provider": "claude"}
 
-    # v0.17.0: 兼容前端传裸 session_id（不带 vscode-/codebuddy- 前缀）。
-    # 优先精确匹配；找不到时按裸 id 回退到 vscode-/codebuddy- 前缀目录。
+    # 兼容前端传裸 session_id（不带 provider 前缀）。
+    # 优先精确匹配；找不到时按裸 id 回退到已支持的 provider 目录。
     sess_dir = OTEL_ROOT / sid
     if not sess_dir.exists():
         for p in _KNOWN_PROVIDER_PREFIXES:
@@ -655,11 +646,11 @@ def load_session_otel(session_id: str) -> Dict[str, Any]:
     }
 
 
-_KNOWN_PROVIDER_PREFIXES = ("vscode-", "codebuddy-", "codex-")
+_KNOWN_PROVIDER_PREFIXES = ("codebuddy-", "codex-")
 
 
 def _split_provider_from_sid(sid: str) -> tuple[Optional[str], str]:
-    """sid 形如 ``vscode-<uuid>`` / ``codebuddy-<uuid>`` 时拆出 provider 与裸 id；
+    """sid 形如 ``codebuddy-<uuid>`` / ``codex-<uuid>`` 时拆出 provider 与裸 id；
     否则当作 Claude（向后兼容）。
     """
     for p in _KNOWN_PROVIDER_PREFIXES:
@@ -674,7 +665,7 @@ def list_otel_sessions() -> List[Dict[str, Any]]:
     用于 SessionList 标记『此 session 已有 OTel 数据』徽章，以及让用户排查
     『为什么前端没显示 OTel』时一眼看到落盘有没有发生。
 
-    v0.17.0：解析 vscode-/codebuddy- 前缀，暴露 ``provider`` 字段；前端按
+    解析 provider 前缀，暴露 ``provider`` 字段；前端按
     provider 切换徽章颜色 / 默认面板视图。
     """
     if not OTEL_ROOT.exists():

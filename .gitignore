@@ -6,10 +6,13 @@ __pycache__/
 .tmp*/
 build/
 
-# dist: only keep the final release exes (0.1.71 baseline + latest 1.0.2); ignore everything else there
+# dist: keep historical baselines plus the latest release executable
 dist/*
 !dist/agent-quality-eval-0.1.71.exe
 !dist/agent-quality-eval-1.0.2.exe
+!dist/agent-quality-eval-1.0.3.exe
+!dist/agent-quality-eval-1.0.4.exe
+!dist/agent-quality-eval-1.0.5.exe
 
 *.spec.bak
 results/

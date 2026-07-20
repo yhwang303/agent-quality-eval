@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-quality-eval"
-version = "1.0.2"
+version = "1.0.5"
 description = "Local-first agent observability plus automated evaluation and A/B testing."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -56,8 +56,6 @@ agent_cot = [
     "assets/hooks/cursor/*.py",
     "assets/hooks/claude/*.js",
     "assets/hooks/claude/*.py",
-    "assets/hooks/vscode/*.js",
-    "assets/hooks/vscode/*.py",
     "assets/hooks/codebuddy/*.js",
     "assets/hooks/codebuddy/*.py",
     "assets/hooks/codex/*.js",

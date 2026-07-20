@@ -718,7 +718,7 @@ def _post_sync_inject_pipeline_log() -> tuple[int, list[str]]:
 # 不替换：
 #   * 单独出现的 ``cursor`` 单词（IDE 名）
 #   * frontend bundle (.js)（Vite 已 minified，不该再动）
-#   * hooks/cursor / hooks/codebuddy / hooks/vscode 下的 .js（直接编辑就好，
+#   * hooks/cursor / hooks/codebuddy 下的 .js（直接编辑就好，
 #     不走 sync 链路；它们的 DATA_ROOT 写盘逻辑已经在 agent-cot 的源里改好）
 _REBRAND_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("cursor-cot-observer", "agent-cot"),

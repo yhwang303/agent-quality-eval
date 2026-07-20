@@ -269,13 +269,12 @@ function SessionOtelKpiBar({ cot }: { cot: SessionCoT }) {
   // v0.15.0：IDE 徽章——一眼看出这条 session 来自哪个 IDE。
   // agent_type 由 cot_extractor._detect_agent_type 在 transcript 里识别后写
   // 进 cot.json，前端只是消费。
-  // v0.17.0：扩展支持 vscode / codebuddy。
+  // v0.17.0：扩展支持 codebuddy。
   const agentTypeRaw = (cot as any).agent_type;
   const agentBadge = (() => {
     switch (agentTypeRaw) {
       case 'claude':    return { text: '🤖 Claude',    cls: 'otel-badge-info' };
       case 'cursor':    return { text: '🅒 Cursor',    cls: 'otel-badge-good' };
-      case 'vscode':    return { text: '🅥 VSCode',    cls: 'otel-badge-vscode' };
       case 'codebuddy': return { text: '🐤 CodeBuddy', cls: 'otel-badge-codebuddy' };
       case 'unknown':
       case null:

@@ -2298,7 +2298,7 @@ function SubSessionDivider({
         <button
           type="button"
           className="tree-subsession-reference"
-          title="为这条 trace 上传标准答案"
+          title="为这条 trace 上传答案或评判资料"
           onClick={(e) => {
             e.stopPropagation();
             onReferenceEvalTurn?.(turn, cot);

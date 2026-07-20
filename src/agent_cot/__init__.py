@@ -74,8 +74,8 @@ were each 59-byte stubs (the one-line placeholder
 the real 18 KB / 16 KB hook scripts. End-user impact: Cursor still fired
 hooks, ``node`` still ran the file, but the file did nothing — no
 ``events.jsonl`` was ever appended, no extractor was ever spawned, and
-the dashboard reported zero Cursor sessions. CodeBuddy / Claude / VSCode
-adapters were unaffected. Root cause: ``tests/test_init_command.py``
+the dashboard reported zero Cursor sessions. Other adapters were unaffected.
+Root cause: ``tests/test_init_command.py``
 fixtures wrote stub bytes into ``src/agent_cot/assets/hooks/cursor/``
 when those files weren't already present, the real bytes got cleaned out
 during a pre-build sweep, and the next ``python -m build`` happily
@@ -125,7 +125,7 @@ v0.20.4 — one-click Claude OTel env auto-injection (Claude only).
   on the colleague's box.
 
   0.20.4 closes this gap with three reinforcing layers, all gated on the
-  Claude adapter (Cursor / CodeBuddy / VSCode adapters are unaffected):
+  Claude adapter (Cursor / Codex / CodeBuddy adapters are unaffected):
 
   1. **init writes env** —— ``ClaudeAdapter.recommended_env(backend_port=...)``
      builds the env dict at the actual port that ``init`` just locked in via
@@ -364,7 +364,7 @@ v0.19.4 — structural consistency pass + CodeBuddy Plan/tool-name fixes.
     the new ``runtime.json`` instead of letting an upgrade silently
     overwrite a user's custom data root with the package default.
   * P-10: ``installer/uninstaller.py`` recognises the nested
-    CodeBuddy / Claude / Copilot hook schemas (``{matcher, hooks:
+    CodeBuddy / Claude hook schemas (``{matcher, hooks:
     [{type, command}]}``), no longer leaving stale absolute paths
     inside ``settings.json`` after an uninstall.
   * P-11: ``pyproject.toml`` ships ``*.md`` from

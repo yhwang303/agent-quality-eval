@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 import difflib
 import hashlib
 import html
+import io
 import json
 import re
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -16,8 +19,19 @@ from .models import PerformanceMetrics, utc_now
 from .store import default_home
 
 
-SUPPORTED_EXTENSIONS = {".json", ".yaml", ".yml", ".md", ".markdown", ".txt"}
+SUPPORTED_EXTENSIONS = {".json", ".jsonl", ".csv", ".yaml", ".yml", ".md", ".markdown", ".txt"}
 _REFERENCE_LLM_CACHE: dict[str, dict[str, Any]] = {}
+_REFERENCE_NORMALIZATION_LLM_CACHE: dict[str, dict[str, Any]] = {}
+_REFERENCE_PREVIEW_CACHE: dict[str, dict[str, Any]] = {}
+_REFERENCE_PREVIEW_TTL_SECONDS = 15 * 60
+_CANONICAL_GOLD_FIELDS = {
+    "question",
+    "expected_answer",
+    "rubric",
+    "keywords",
+    "assertions",
+    "process_requirements",
+}
 
 
 def reference_eval_home() -> Path:
@@ -35,17 +49,52 @@ def turn_reference_answer_path(session_id: str, turn_index: int) -> Path:
 
 
 def save_turn_reference_answer(session_id: str, turn_index: int, filename: str, content: str) -> dict[str, Any]:
-    parsed = parse_reference_dataset(filename, content)
-    case = _select_first_reference_case(parsed)
+    preview = preview_reference_upload(filename, content)
+    return _persist_turn_reference_preview(session_id, turn_index, preview)
+
+
+def confirm_turn_reference_answer(session_id: str, turn_index: int, confirm_token: str) -> dict[str, Any]:
+    _prune_reference_preview_cache()
+    preview = _REFERENCE_PREVIEW_CACHE.pop(str(confirm_token or ""), None)
+    if not isinstance(preview, dict):
+        raise ValueError("Gold preview expired or is invalid; preview the file again")
+    scope = preview.get("_scope") if isinstance(preview.get("_scope"), dict) else {}
+    scoped_session = str(scope.get("session_id") or "")
+    scoped_turn = scope.get("turn_index")
+    if scoped_session and scoped_session != str(session_id):
+        raise ValueError("Gold preview belongs to a different trace")
+    if scoped_turn is not None and int(scoped_turn) != int(turn_index):
+        raise ValueError("Gold preview belongs to a different turn")
+    return _persist_turn_reference_preview(session_id, turn_index, preview)
+
+
+def _persist_turn_reference_preview(
+    session_id: str,
+    turn_index: int,
+    preview: dict[str, Any],
+) -> dict[str, Any]:
+    canonical = preview.get("canonical") if isinstance(preview.get("canonical"), dict) else {}
+    parsed = canonical.get("dataset") if isinstance(canonical.get("dataset"), dict) else {}
+    case = canonical.get("case") if isinstance(canonical.get("case"), dict) else {}
+    reference_answer = (
+        canonical.get("reference_answer")
+        if isinstance(canonical.get("reference_answer"), dict)
+        else _reference_case_payload(case, parsed)
+    )
     payload = {
-        "schema_version": "turn-reference-answer-v1",
+        "schema_version": "turn-reference-answer-v2",
         "session_id": session_id,
         "turn_index": int(turn_index),
         "created_at": utc_now(),
-        "source_filename": filename,
+        "source_filename": preview.get("source_filename"),
         "dataset": dataset_summary(parsed),
         "case": case,
-        "reference_answer": _reference_case_payload(case, parsed),
+        "reference_answer": reference_answer,
+        "binding_hash": reference_binding_hash(reference_answer),
+        "eval_mode": preview.get("eval_mode") or infer_reference_eval_mode(case),
+        "has_gold_evidence": bool(preview.get("has_gold_evidence")),
+        "normalization_report": preview.get("normalization_report") or {},
+        "raw": preview.get("raw") or {},
     }
     path = turn_reference_answer_path(session_id, turn_index)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +113,11 @@ def load_turn_reference_answer(session_id: str, turn_index: int) -> dict[str, An
         return None
     if not isinstance(data, dict):
         return None
+    reference_answer = data.get("reference_answer") if isinstance(data.get("reference_answer"), dict) else {}
+    case = data.get("case") if isinstance(data.get("case"), dict) else reference_answer
+    data.setdefault("binding_hash", reference_binding_hash(reference_answer))
+    data.setdefault("has_gold_evidence", has_gold_evidence(case))
+    data.setdefault("eval_mode", infer_reference_eval_mode(case))
     data["storage_path"] = str(path.resolve())
     return data
 
@@ -77,13 +131,376 @@ def delete_turn_reference_answer(session_id: str, turn_index: int) -> bool:
 
 
 def normalize_reference_upload(filename: str, content: str) -> dict[str, Any]:
-    parsed = parse_reference_dataset(filename, content)
+    return preview_reference_upload(filename, content, issue_token=False)
+
+
+def preview_reference_upload(
+    filename: str,
+    content: str,
+    *,
+    session_id: str | None = None,
+    turn_index: int | None = None,
+    issue_token: bool = True,
+) -> dict[str, Any]:
+    parsed: dict[str, Any] | None = None
+    deterministic_error: Exception | None = None
+    try:
+        parsed = parse_reference_dataset(filename, content)
+    except (ValueError, json.JSONDecodeError) as exc:
+        deterministic_error = exc
+
+    initial_case = None
+    whole_content_fallback = False
+    if isinstance(parsed, dict):
+        try:
+            initial_case = _select_first_reference_case(parsed)
+        except ValueError as exc:
+            deterministic_error = exc
+
+    llm_normalization: dict[str, Any] | None = None
+    if _reference_case_needs_semantic_normalization(initial_case):
+        llm_normalization = _run_reference_llm_normalization(
+            filename=filename,
+            content=content,
+            deterministic_case=initial_case,
+        )
+        if llm_normalization.get("status") == "completed":
+            if isinstance(parsed, dict) and isinstance(initial_case, dict):
+                _merge_llm_reference_fields(initial_case, llm_normalization)
+            else:
+                llm_case = llm_normalization.get("case")
+                if isinstance(llm_case, dict) and has_gold_evidence(llm_case):
+                    parsed = _normalize_raw_dataset(filename, llm_case)
+
+    if not isinstance(parsed, dict):
+        # Last-resort product behavior: a user's file may simply be the final
+        # answer in an unknown private wrapper. Never require them to learn our
+        # schema just to proceed. If semantic normalization is unavailable,
+        # preserve the complete upload verbatim as expected_answer.
+        if content.strip():
+            parsed = _normalize_raw_dataset(
+                filename,
+                {
+                    "expected_answer": content,
+                    "metadata": {
+                        "normalization_fallback": "whole_content_as_expected_answer",
+                        "deterministic_error": str(deterministic_error or ""),
+                    },
+                },
+            )
+            whole_content_fallback = True
+        else:
+            raise ValueError("reference content is empty")
+
     case = _select_first_reference_case(parsed)
-    return {
+    reference_answer = _reference_case_payload(case, parsed)
+    report = _build_normalization_report(filename, content, parsed, case)
+    if whole_content_fallback:
+        report["mode"] = "whole-content-fallback"
+        report["mapping"].append(
+            {
+                "source_path": "whole_file",
+                "canonical_field": "expected_answer",
+                "conversion": "verbatim fallback",
+            }
+        )
+        report["warnings"].append(
+            "No reliable field mapping was available, so the complete upload was preserved as the expected answer."
+        )
+    if isinstance(llm_normalization, dict):
+        report["llm_normalization"] = {
+            key: llm_normalization.get(key)
+            for key in ("status", "provider", "model", "latency_ms", "cache_hit", "reason")
+            if llm_normalization.get(key) is not None
+        }
+        if llm_normalization.get("status") == "completed":
+            report["mode"] = "llm-assisted-schema-normalization"
+            for item in llm_normalization.get("mapping") or []:
+                if isinstance(item, dict) and item not in report["mapping"]:
+                    report["mapping"].append(item)
+            report["warnings"].append(
+                "Configured Judge was used to identify or derive missing Gold fields; review the normalized result before confirming."
+            )
+    has_evidence = has_gold_evidence(case)
+    token = secrets.token_urlsafe(24) if issue_token else ""
+    expires_at_epoch = time.time() + _REFERENCE_PREVIEW_TTL_SECONDS
+    preview = {
+        "confirm_token": token or None,
+        "expires_at_epoch": expires_at_epoch if token else None,
+        "source_filename": filename,
+        "raw": {
+            "format": Path(filename).suffix.lower().lstrip(".") or "text",
+            "content": content,
+            "bytes": len(content.encode("utf-8", errors="replace")),
+            "line_count": len(content.splitlines()),
+            "content_hash": hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:12],
+        },
+        "canonical": {
+            "dataset": parsed,
+            "case": case,
+            "reference_answer": reference_answer,
+        },
+        # Compatibility fields used by the existing Regression dialog.
         "dataset": dataset_summary(parsed),
         "case": case,
-        "reference_answer": _reference_case_payload(case, parsed),
+        "reference_answer": reference_answer,
+        "normalization_report": report,
+        "mapping": report["mapping"],
+        "warnings": report["warnings"],
+        "has_gold_evidence": has_evidence,
+        "eval_mode": infer_reference_eval_mode(case),
+        "normalization_method": report["mode"],
+        "_scope": {
+            "session_id": session_id,
+            "turn_index": int(turn_index) if turn_index is not None else None,
+        },
     }
+    if token:
+        _prune_reference_preview_cache()
+        _REFERENCE_PREVIEW_CACHE[token] = preview
+    return preview
+
+
+def _reference_case_needs_semantic_normalization(case: dict[str, Any] | None) -> bool:
+    if not isinstance(case, dict) or not has_gold_evidence(case):
+        return True
+    # A plain final answer is already valid Gold, but missing rubric or key
+    # points can still be derived for a more reliable semantic comparison.
+    return bool(
+        case.get("expected_answer")
+        and (not case.get("rubric") or not case.get("keywords"))
+    )
+
+
+def _run_reference_llm_normalization(
+    *,
+    filename: str,
+    content: str,
+    deterministic_case: dict[str, Any] | None,
+) -> dict[str, Any]:
+    try:
+        from .providers import load_provider
+        from .settings import load_critic_settings
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "reason": f"provider unavailable: {type(exc).__name__}: {exc}",
+        }
+    settings = load_critic_settings()
+    if not settings.enabled:
+        return {"status": "disabled", "reason": "Critic model is disabled."}
+    provider_config = settings.to_provider_config()
+    if not provider_config:
+        return {"status": "unconfigured", "reason": "Critic model is not configured."}
+
+    raw_excerpt = content[:30000]
+    schema = {
+        "question": "原始内容明确提供的问题；无法确认则为空字符串",
+        "expected_answer": "原始内容中的最终答案或参考答案；尽量逐字保留，不得补充事实",
+        "rubric": "从答案和显式规则概括的简短评判标准；不得引入新事实",
+        "keywords": ["从答案提取的 3-10 个关键事实词；不得引入原文没有的概念"],
+        "assertions": ["只提取原文明确表达的断言；没有则为空数组"],
+        "process_requirements": {
+            "required_tools": ["只提取原文明确要求的工具"],
+            "must_include": ["只提取原文明确要求必须包含的内容"],
+            "must_not_include": ["只提取原文明确禁止的内容"],
+        },
+        "source_paths": {
+            "expected_answer": "来源字段路径或 plain_text",
+            "rubric": "来源字段路径或 derived_from_expected_answer",
+            "keywords": "来源字段路径或 derived_from_expected_answer",
+        },
+        "confidence": "high | medium | low",
+        "notes": ["需要用户复核的歧义"],
+    }
+    payload = {
+        "filename": filename,
+        "raw_content": raw_excerpt,
+        "deterministic_case": deterministic_case or {},
+        "content_truncated": len(content) > len(raw_excerpt),
+    }
+    prompt = (
+        "你是 Gold 数据规整器。用户可以上传任意格式，也可能只上传一段 final answer。"
+        "请把已有内容规整到统一 schema，不要求用户预先提供字段名。\n"
+        "硬性规则：不得虚构问题、事实、工具或业务要求；已有 expected_answer 时必须保留其原意，"
+        "不要润色或补写。可以从 final answer 提取关键词，并生成只描述该答案覆盖要求的简短 rubric。"
+        "无法确认的字段留空。只返回 JSON，不要 Markdown。\n"
+        f"输出 schema:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+        f"输入:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+    cache_key = _short_hash(
+        json.dumps(
+            {"provider": settings.provider, "model": settings.model, "prompt": prompt},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+    if cache_key in _REFERENCE_NORMALIZATION_LLM_CACHE:
+        cached = dict(_REFERENCE_NORMALIZATION_LLM_CACHE[cache_key])
+        cached["cache_hit"] = True
+        return cached
+    try:
+        provider = load_provider(provider_config)
+        started = time.time()
+        response = provider.call(prompt)
+        latency_ms = int((time.time() - started) * 1000)
+        if response.error:
+            return {
+                "status": "error",
+                "reason": response.error,
+                "provider": settings.provider,
+                "model": settings.model,
+                "latency_ms": latency_ms,
+            }
+        parsed = _extract_json_object(response.output)
+        if not isinstance(parsed, dict):
+            return {
+                "status": "error",
+                "reason": "Judge did not return valid JSON.",
+                "provider": settings.provider,
+                "model": settings.model,
+                "latency_ms": latency_ms,
+            }
+        normalized = _normalize_llm_reference_case(parsed)
+        result = {
+            "status": "completed",
+            "case": normalized,
+            "mapping": _llm_reference_mapping(parsed),
+            "confidence": str(parsed.get("confidence") or "medium"),
+            "notes": _text_list(parsed.get("notes")),
+            "provider": settings.provider,
+            "model": settings.model,
+            "latency_ms": latency_ms,
+            "cache_hit": False,
+        }
+        _REFERENCE_NORMALIZATION_LLM_CACHE[cache_key] = dict(result)
+        return result
+    except Exception as exc:
+        return {
+            "status": "error",
+            "reason": f"{type(exc).__name__}: {exc}",
+            "provider": settings.provider,
+            "model": settings.model,
+        }
+
+
+def _normalize_llm_reference_case(data: dict[str, Any]) -> dict[str, Any]:
+    process = data.get("process_requirements")
+    if not isinstance(process, dict):
+        process = {}
+    return {
+        "question": str(data.get("question") or ""),
+        "expected_answer": str(data.get("expected_answer") or ""),
+        "rubric": str(data.get("rubric") or ""),
+        "keywords": _text_list(data.get("keywords"))[:20],
+        "assertions": [
+            item for item in (data.get("assertions") or []) if isinstance(item, dict)
+        ][:20],
+        "process_requirements": {
+            key: _text_list(process.get(key))[:20]
+            for key in ("required_tools", "must_include", "must_not_include", "forbidden_tools")
+            if _text_list(process.get(key))
+        },
+    }
+
+
+def _merge_llm_reference_fields(
+    deterministic_case: dict[str, Any],
+    llm_normalization: dict[str, Any],
+) -> None:
+    llm_case = llm_normalization.get("case")
+    if not isinstance(llm_case, dict):
+        return
+    # Deterministic source fields remain authoritative. For an unstructured
+    # note, the model may narrow the whole-file fallback to an exact verbatim
+    # answer span; it may not rewrite that span.
+    original_answer = str(deterministic_case.get("expected_answer") or "")
+    llm_answer = str(llm_case.get("expected_answer") or "").strip()
+    if (
+        original_answer
+        and llm_answer
+        and llm_answer != original_answer
+        and llm_answer in original_answer
+    ):
+        deterministic_case["original_expected_answer"] = original_answer
+        deterministic_case["expected_answer"] = llm_answer
+
+    for key in (
+        "question",
+        "rubric",
+        "keywords",
+        "assertions",
+        "process_requirements",
+    ):
+        if not deterministic_case.get(key) and llm_case.get(key):
+            deterministic_case[key] = llm_case[key]
+    deterministic_case["normalization"] = {
+        **(
+            deterministic_case.get("normalization")
+            if isinstance(deterministic_case.get("normalization"), dict)
+            else {}
+        ),
+        "semantic_enrichment": "configured_judge",
+    }
+
+
+def _llm_reference_mapping(data: dict[str, Any]) -> list[dict[str, str]]:
+    source_paths = data.get("source_paths")
+    if not isinstance(source_paths, dict):
+        source_paths = {}
+    mapping = []
+    for canonical in _CANONICAL_GOLD_FIELDS:
+        if not data.get(canonical):
+            continue
+        mapping.append(
+            {
+                "source_path": str(source_paths.get(canonical) or "semantic extraction"),
+                "canonical_field": canonical,
+                "conversion": "LLM-assisted normalization",
+            }
+        )
+    return mapping
+
+
+def _prune_reference_preview_cache() -> None:
+    now = time.time()
+    expired = [
+        token
+        for token, item in _REFERENCE_PREVIEW_CACHE.items()
+        if float(item.get("expires_at_epoch") or 0) <= now
+    ]
+    for token in expired:
+        _REFERENCE_PREVIEW_CACHE.pop(token, None)
+
+
+def has_gold_evidence(case: dict[str, Any] | None) -> bool:
+    if not isinstance(case, dict):
+        return False
+    return any(
+        bool(case.get(key))
+        for key in ("expected_answer", "rubric", "keywords", "assertions", "process_requirements")
+    )
+
+
+def infer_reference_eval_mode(case: dict[str, Any] | None) -> str:
+    return "gold" if has_gold_evidence(case) else "generic"
+
+
+def reference_binding_hash(reference_answer: dict[str, Any] | None) -> str:
+    if not isinstance(reference_answer, dict) or not reference_answer:
+        return ""
+    material = {
+        key: reference_answer.get(key)
+        for key in (
+            "expected_answer",
+            "rubric",
+            "keywords",
+            "assertions",
+            "process_requirements",
+        )
+    }
+    encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
 def upload_reference_dataset(filename: str, content: str) -> dict[str, Any]:
@@ -261,6 +678,33 @@ def dataset_summary(data: dict[str, Any], *, dataset_dir: Path | None = None) ->
 def _load_raw_reference_content(ext: str, content: str) -> Any:
     if ext == ".json":
         return json.loads(content)
+    if ext == ".jsonl":
+        rows = []
+        errors = []
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                errors.append(line_number)
+        if not rows:
+            raise ValueError("JSONL does not contain any valid JSON object")
+        return {
+            "name": "jsonl-reference",
+            "cases": rows,
+            "_parse_warnings": [
+                f"Skipped invalid JSONL line {line_number}" for line_number in errors
+            ],
+        }
+    if ext == ".csv":
+        reader = csv.DictReader(io.StringIO(content))
+        if not reader.fieldnames:
+            raise ValueError("CSV must contain a header row")
+        rows = [dict(row) for row in reader if any(str(value or "").strip() for value in row.values())]
+        if not rows:
+            raise ValueError("CSV does not contain any data rows")
+        return {"name": "csv-reference", "cases": rows}
     if ext in {".yaml", ".yml"}:
         import yaml
 
@@ -282,6 +726,8 @@ def _normalize_raw_dataset(filename: str, raw: Any) -> dict[str, Any]:
         cases_raw = [cases_raw]
     cases: list[dict[str, Any]] = []
     for index, item in enumerate(cases_raw or [], start=1):
+        if isinstance(item, dict):
+            item = _prepare_case_input(item)
         case = _normalize_case(item, index)
         if case:
             cases.append(case)
@@ -291,7 +737,53 @@ def _normalize_raw_dataset(filename: str, raw: Any) -> dict[str, Any]:
         "description": str(raw.get("description") or ""),
         "metadata": raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {},
         "cases": cases,
+        "_parse_warnings": list(raw.get("_parse_warnings") or []),
     }
+
+
+def _prepare_case_input(item: dict[str, Any]) -> dict[str, Any]:
+    """Flatten only known Gold containers and explicit deterministic mappings."""
+    prepared = dict(item)
+    mapping = item.get("schema_mapping") or item.get("field_mapping")
+    if isinstance(mapping, dict):
+        for canonical, source_path in mapping.items():
+            canonical_key = str(canonical or "").strip()
+            if canonical_key not in _CANONICAL_GOLD_FIELDS:
+                continue
+            value = _get_nested_value(item, str(source_path or ""))
+            if value not in (None, "", [], {}):
+                prepared[canonical_key] = value
+
+    for container_name in ("gold", "ground_truth", "reference", "reference_answer", "evaluation"):
+        nested = item.get(container_name)
+        if not isinstance(nested, dict):
+            continue
+        for key, value in nested.items():
+            prepared.setdefault(str(key), value)
+        if "expected_answer" not in prepared:
+            nested_answer = (
+                nested.get("expected_answer")
+                or nested.get("standard_answer")
+                or nested.get("answer")
+                or nested.get("response")
+                or nested.get("output")
+            )
+            if nested_answer not in (None, "", [], {}):
+                prepared["expected_answer"] = nested_answer
+    return prepared
+
+
+def _get_nested_value(payload: Any, source_path: str) -> Any:
+    current = payload
+    for segment in [part for part in source_path.split(".") if part]:
+        if isinstance(current, dict) and segment in current:
+            current = current[segment]
+            continue
+        if isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
+            continue
+        return None
+    return current
 
 
 def _normalize_case(item: Any, index: int) -> dict[str, Any] | None:
@@ -308,6 +800,7 @@ def _normalize_case(item: Any, index: int) -> dict[str, Any] | None:
         or item.get("answer")
         or item.get("expected")
         or item.get("output")
+        or item.get("response")
         or ""
     )
     assertions = item.get("assertions", item.get("assert", [])) or []
@@ -320,7 +813,14 @@ def _normalize_case(item: Any, index: int) -> dict[str, Any] | None:
     return {
         "id": str(item.get("id") or item.get("name") or f"case-{index}"),
         "title": str(item.get("title") or item.get("name") or item.get("id") or f"Case {index}"),
-        "question": str(item.get("question") or item.get("input") or item.get("prompt") or ""),
+        "question": str(
+            item.get("question")
+            or item.get("input")
+            or item.get("prompt")
+            or item.get("instruction")
+            or item.get("task")
+            or ""
+        ),
         "expected_answer": str(expected or ""),
         "original_expected_answer": str(expected or ""),
         "rubric": str(item.get("rubric") or item.get("criteria") or ""),
@@ -333,6 +833,137 @@ def _normalize_case(item: Any, index: int) -> dict[str, Any] | None:
             "note": "Input was normalized into eval fields without changing the expected answer semantics.",
         },
     }
+
+
+def _build_normalization_report(
+    filename: str,
+    content: str,
+    parsed: dict[str, Any],
+    case: dict[str, Any],
+) -> dict[str, Any]:
+    ext = Path(filename).suffix.lower()
+    try:
+        raw = _load_raw_reference_content(ext, content)
+    except Exception:
+        raw = content
+    source_case: Any = raw
+    if isinstance(raw, dict):
+        candidates = raw.get("cases", raw.get("tests", raw.get("items")))
+        if isinstance(candidates, list) and candidates:
+            source_case = candidates[0]
+        elif isinstance(candidates, dict):
+            source_case = candidates
+    elif isinstance(raw, list) and raw:
+        source_case = raw[0]
+
+    mapping: list[dict[str, str]] = []
+    aliases = {
+        "question": {"question", "input", "prompt", "instruction", "task"},
+        "expected_answer": {
+            "expected_answer",
+            "reference_answer",
+            "gold_answer",
+            "standard_answer",
+            "reference",
+            "answer",
+            "expected",
+            "output",
+            "response",
+        },
+        "rubric": {"rubric", "criteria"},
+        "keywords": {"keywords", "key_points", "expected_keywords"},
+        "assertions": {"assertions", "assert"},
+        "process_requirements": {
+            "process_requirements",
+            "trace_expectations",
+            "steps",
+            "expected_steps",
+            "must_include",
+            "required_tools",
+            "forbidden_tools",
+        },
+    }
+    if isinstance(source_case, dict):
+        explicit = source_case.get("schema_mapping") or source_case.get("field_mapping")
+        if isinstance(explicit, dict):
+            for target, source in explicit.items():
+                if str(target) in _CANONICAL_GOLD_FIELDS:
+                    mapping.append(
+                        {
+                            "source_path": str(source),
+                            "canonical_field": str(target),
+                            "conversion": "explicit source-path mapping",
+                        }
+                    )
+        for path, value in _walk_source_fields(source_case):
+            leaf = path.rsplit(".", 1)[-1].lower().replace("-", "_").replace(" ", "_")
+            if value in (None, "", [], {}):
+                continue
+            for canonical, names in aliases.items():
+                if leaf in names and not any(
+                    row["canonical_field"] == canonical for row in mapping
+                ):
+                    mapping.append(
+                        {
+                            "source_path": path,
+                            "canonical_field": canonical,
+                            "conversion": "alias normalization" if leaf != canonical else "direct",
+                        }
+                    )
+                    break
+
+    warnings = list(parsed.get("_parse_warnings") or [])
+    if not str(case.get("expected_answer") or "").strip():
+        if has_gold_evidence(case):
+            warnings.append(
+                "No standard answer text was found; Gold Eval will use the available rubric, assertions, keywords, or process requirements."
+            )
+        else:
+            warnings.append(
+                "No usable Gold evidence was found; this upload can only run as a generic trace evaluation."
+            )
+    if len(parsed.get("cases") or []) > 1:
+        warnings.append(
+            "The file contains multiple records; single-trace upload uses the first record."
+        )
+
+    used_paths = {row["source_path"] for row in mapping}
+    unmapped = []
+    if isinstance(source_case, dict):
+        for path, value in _walk_source_fields(source_case):
+            mapped = any(path == used or path.startswith(f"{used}.") for used in used_paths)
+            if not mapped and value not in (None, "", [], {}):
+                if path.split(".", 1)[0] not in {"schema_mapping", "field_mapping"}:
+                    unmapped.append(path)
+    return {
+        "schema_version": "gold-normalization-report-v1",
+        "mode": "deterministic-schema-only",
+        "mapping": mapping,
+        "warnings": warnings,
+        "unmapped_fields": sorted(set(unmapped)),
+        "has_gold_evidence": has_gold_evidence(case),
+        "eval_mode": infer_reference_eval_mode(case),
+        "canonical_hash": reference_binding_hash(_reference_case_payload(case, parsed)),
+    }
+
+
+def _walk_source_fields(value: Any, prefix: str = "") -> list[tuple[str, Any]]:
+    out: list[tuple[str, Any]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(child, (dict, list)):
+                out.extend(_walk_source_fields(child, path))
+            else:
+                out.append((path, child))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            path = f"{prefix}.{index}" if prefix else str(index)
+            if isinstance(child, (dict, list)):
+                out.extend(_walk_source_fields(child, path))
+            else:
+                out.append((path, child))
+    return out
 
 
 def _normalize_process_requirements(item: dict[str, Any]) -> dict[str, Any]:
@@ -449,8 +1080,9 @@ def _looks_like_single_reference_case(raw: dict[str, Any]) -> bool:
         "answer",
         "expected",
         "output",
+        "response",
     }
-    prompt_keys = {"question", "input", "prompt"}
+    prompt_keys = {"question", "input", "prompt", "instruction", "task"}
     rubric_keys = {
         "rubric",
         "criteria",
@@ -465,7 +1097,14 @@ def _looks_like_single_reference_case(raw: dict[str, Any]) -> bool:
         "must_include",
         "required_tools",
     }
-    return bool((answer_keys | prompt_keys | rubric_keys).intersection(raw.keys()))
+    container_keys = {
+        "gold",
+        "ground_truth",
+        "evaluation",
+        "schema_mapping",
+        "field_mapping",
+    }
+    return bool((answer_keys | prompt_keys | rubric_keys | container_keys).intersection(raw.keys()))
 
 
 def _parse_markdown_reference(content: str) -> dict[str, Any]:
@@ -519,8 +1158,20 @@ def _markdown_sections(body: str) -> dict[str, str]:
         "criteria": "criteria",
         "keywords": "keywords",
     }
+    natural_headings = {
+        "用户想解决的问题": "question",
+        "用户的问题": "question",
+        "我认为合理的结果": "expected",
+        "我认为比较合理的回答": "expected",
+        "验收时我主要看": "rubric",
+        "我主要会看这一点": "rubric",
+    }
     for line in body.splitlines():
         stripped = line.strip()
+        if stripped in natural_headings:
+            current = natural_headings[stripped]
+            sections.setdefault(current, [])
+            continue
         label_match = re.match(r"^(?:#{2,5}\s*)?([A-Za-z ]{3,24}|问题|标准答案|答案|评分标准|关键词)\s*[:：]\s*(.*)$", stripped)
         if label_match:
             raw_label = label_match.group(1).strip().lower()
@@ -593,25 +1244,49 @@ def _deterministic_reference_eval(
     assertion_score = (
         sum(float(item.get("score") or 0.0) for item in assertion_results) / len(assertion_results)
         if assertion_results
-        else 1.0
+        else None
     )
     has_keywords = bool(keywords)
+    has_structured_evidence = has_keywords or bool(assertion_results)
+    components: list[tuple[str, float, float]] = []
+    if expected_answer:
+        # Character/token overlap is useful for exact-answer tasks, but should
+        # not dominate when the user supplied stronger semantic checks.
+        components.extend(
+            [
+                ("sequence_similarity", seq, 0.05 if has_structured_evidence else 0.45),
+                ("token_overlap", token_overlap, 0.10 if has_structured_evidence else 0.55),
+            ]
+        )
     if has_keywords:
-        overall = (seq * 0.25) + (token_overlap * 0.30) + (keyword_score * 0.30) + (assertion_score * 0.15)
+        components.append(("keyword_coverage", keyword_score, 0.45))
+    if assertion_score is not None:
+        components.append(("deterministic_assertions", assertion_score, 0.40))
+    if components:
+        total_weight = sum(weight for _, _, weight in components)
+        overall = sum(score * weight for _, score, weight in components) / total_weight
     else:
-        overall = (seq * 0.40) + (token_overlap * 0.45) + (assertion_score * 0.15)
+        overall = 0.0
     process_eval = _evaluate_process_requirements(case.get("process_requirements"), trace)
     if process_eval.get("applicable"):
-        overall = (overall * 0.80) + (float(process_eval.get("score") or 0.0) * 0.20)
+        process_weight = 0.30 if components else 1.0
+        overall = (overall * (1.0 - process_weight)) + (
+            float(process_eval.get("score") or 0.0) * process_weight
+        )
     return {
         "overall_score": round(max(0.0, min(1.0, overall)), 4),
         "sequence_similarity": round(seq, 4),
         "token_overlap": round(token_overlap, 4),
         "keyword_coverage": round(keyword_score, 4),
         "missing_keywords": missing_keywords,
-        "assertion_score": round(assertion_score, 4),
+        "assertion_score": round(assertion_score, 4) if assertion_score is not None else None,
         "assertion_results": assertion_results,
         "process_requirements": process_eval,
+        "score_components": [
+            {"name": name, "score": round(score, 4), "weight": weight}
+            for name, score, weight in components
+        ],
+        "conclusive": bool(components or process_eval.get("applicable")),
         "method": "sequence_similarity + token_overlap + keyword_coverage + deterministic_assertions",
     }
 
@@ -874,9 +1549,19 @@ def _reference_verdict(score: float, deterministic: dict[str, Any], llm_compare:
     llm_verdict = str(llm_compare.get("verdict") or "").lower()
     if llm_verdict == "fail" and score < 0.68:
         return "fail"
+    if not deterministic.get("conclusive") and llm_compare.get("status") != "completed":
+        return "partial"
     if score >= 0.78 and not deterministic.get("missing_keywords"):
         return "pass"
     if score >= 0.52:
+        return "partial"
+    # A final-answer-only upload may yield independently derived key points
+    # while lexical similarity remains low for a longer semantic paraphrase.
+    # Treat majority key-point coverage as partial evidence, never as a pass.
+    if (
+        score >= 0.40
+        and float(deterministic.get("keyword_coverage") or 0.0) >= 0.50
+    ):
         return "partial"
     return "fail"
 

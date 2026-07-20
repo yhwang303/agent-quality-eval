@@ -90,7 +90,7 @@ def log(
         ``extractor`` / ``backend`` / ``cli``.
     ide:
         IDE / tool that triggered this stage. ``cursor`` / ``codebuddy``
-        / ``claude`` / ``vscode`` / ``-`` (unknown).
+        / ``claude`` / ``codebuddy`` / ``-`` (unknown).
     sid:
         Session id (with prefix if applicable, e.g. ``codebuddy-<sid>``).
     event:

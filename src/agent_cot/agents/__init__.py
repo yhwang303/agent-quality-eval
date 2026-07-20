@@ -23,13 +23,11 @@ from .claude import ClaudeAdapter
 from .codex import CodexAdapter
 from .codebuddy import CodeBuddyAdapter
 from .cursor import CursorAdapter
-from .vscode import VSCodeAdapter
 
 _REGISTRY: dict[str, type[AgentAdapter]] = {
     "cursor": CursorAdapter,
     "claude": ClaudeAdapter,
     "codex": CodexAdapter,
-    "vscode": VSCodeAdapter,
     "codebuddy": CodeBuddyAdapter,
 }
 
@@ -81,7 +79,6 @@ __all__ = [
     "CursorCotError",
     "HookEntry",
     "UnknownAgentError",
-    "VSCodeAdapter",
     "get_adapter",
     "iter_adapters",
     "list_agents",

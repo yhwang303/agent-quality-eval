@@ -39,9 +39,6 @@ OWNED_HOOK_SCRIPTS: frozenset[str] = frozenset(
         # Cursor
         "cot-bridge.js",
         "cot-stream.js",
-        # VSCode (Copilot Chat Agent hooks, Preview)
-        "cot-stream-vscode.js",
-        "cot-bridge-vscode.js",
         # CodeBuddy（Phase 3 用）
         "cot-stream-codebuddy.js",
         "cot-bridge-codebuddy.js",

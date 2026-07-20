@@ -73,7 +73,7 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     isolated_hooks = tmp_path / "assets" / "hooks"
     isolated_hooks.mkdir(parents=True, exist_ok=True)
-    for agent_name in ("cursor", "codebuddy", "claude", "vscode"):
+    for agent_name in ("cursor", "codebuddy", "claude"):
         (isolated_hooks / agent_name).mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(_assets, "hooks_dir", lambda: isolated_hooks)
     return fake_home

@@ -15,8 +15,8 @@ SETTINGS_PATH = default_home() / "config" / "settings.json"
 
 
 PROVIDER_MODELS: dict[str, list[str]] = {
-    "timiai": ["gpt-4o-mini", "gpt-5.4", "gpt-4o"],
-    "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+    "timiai": ["gpt-4o-mini", "gpt-5.4", "gpt-4o", "glm-5.1", "glm-5.2"],
+    "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"],
 }
 
 
@@ -44,7 +44,7 @@ class CriticSettings:
                 "type": "deepseek",
                 "api_url": "https://api.deepseek.com/chat/completions",
                 "api_key": self.api_key,
-                "model": self.model or "deepseek-chat",
+                "model": self.model or "deepseek-v4-flash",
                 "threshold": 0.7,
                 "timeout": self.timeout,
                 "max_tokens": 4096,
@@ -88,6 +88,8 @@ def load_critic_settings() -> CriticSettings:
     if provider not in PROVIDER_MODELS:
         provider = "timiai"
     model = str(critic.get("model") or (PROVIDER_MODELS[provider][0]))
+    if model not in PROVIDER_MODELS[provider]:
+        model = PROVIDER_MODELS[provider][0]
     try:
         timeout = int(critic.get("timeout") or 120)
     except (TypeError, ValueError):
@@ -122,10 +124,13 @@ def save_critic_settings(payload: dict[str, Any]) -> CriticSettings:
         timeout = int(payload.get("timeout") or current.timeout or 120)
     except (TypeError, ValueError):
         timeout = current.timeout
+    model = str(payload.get("model") or current.model or PROVIDER_MODELS[provider][0])
+    if model not in PROVIDER_MODELS[provider]:
+        model = PROVIDER_MODELS[provider][0]
     settings = CriticSettings(
         enabled=bool(payload.get("enabled", current.enabled)),
         provider=provider,
-        model=str(payload.get("model") or current.model or PROVIDER_MODELS[provider][0]),
+        model=model,
         api_key=str(api_key or ""),
         timeout=max(15, min(timeout, 300)),
     )

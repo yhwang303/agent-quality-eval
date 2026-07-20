@@ -18,7 +18,7 @@ from agent_cot.agents.base import AgentNotImplementedError  # noqa: F401  (kept 
 def test_registry_lists_cursor_and_claude() -> None:
     """The registry must always advertise cursor + claude (P0 contract).
 
-    Newer adapters (codebuddy, vscode) are additive and may show up here
+    Newer adapters (codex, codebuddy) are additive and may show up here
     too — assert containment instead of strict equality so adding more
     IDEs doesn't crash this smoke test.
     """

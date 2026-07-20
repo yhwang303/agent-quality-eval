@@ -1,9 +1,12 @@
 import json
 from typing import Any
 
+import agent_quality_eval.evaluation.api as eval_api
+import agent_quality_eval.evaluation.critic as critic_module
 from agent_quality_eval.evaluation.api import (
     _AB_LLM_COMPARE_CACHE,
     _REGRESSION_LLM_COMPARE_CACHE,
+    _build_or_load_turn_eval,
     _compare_turn_reports,
     _record_compare_eval_event,
 )
@@ -499,3 +502,51 @@ def test_eval_log_records_regression_gate_and_gold_metadata(tmp_path, monkeypatc
     assert events[0]["summary"]["gate_verdict"] == "FAIL"
     assert events[0]["summary"]["has_regression"] is True
     assert events[0]["summary"]["blocking_reasons"]
+
+
+def test_turn_eval_cache_is_keyed_by_trace_and_gold(tmp_path, monkeypatch):
+    context = _context("cache-session")
+    build_calls: list[dict[str, Any]] = []
+    critic_calls: list[dict[str, Any]] = []
+
+    def fake_build(*args, **kwargs):
+        build_calls.append(kwargs)
+        report = _report("cache-session", passed=True, score=1.0)
+        report["eval_version"] = "v3"
+        report["assertion_set"] = {"version": "turn-v3.7"}
+        return report
+
+    monkeypatch.setattr(eval_api, "build_turn_eval_report", fake_build)
+    monkeypatch.setattr(
+        critic_module,
+        "run_critic_for_cot",
+        lambda *args, **kwargs: critic_calls.append(kwargs) or {},
+    )
+    db_path = str(tmp_path / "eval.db")
+
+    first = _build_or_load_turn_eval(
+        "cache-session",
+        0,
+        db_path,
+        source_context=context,
+    )
+    second = _build_or_load_turn_eval(
+        "cache-session",
+        0,
+        db_path,
+        source_context=context,
+    )
+    gold = {"expected_answer": "implemented"}
+    third = _build_or_load_turn_eval(
+        "cache-session",
+        0,
+        db_path,
+        reference_answer=gold,
+        source_context=context,
+    )
+
+    assert first["turn_source_hash"] == second["turn_source_hash"]
+    assert len(build_calls) == 2
+    assert len(critic_calls) == 1
+    assert third["gold_binding_hash"]
+    assert third["eval_mode"] == "gold"

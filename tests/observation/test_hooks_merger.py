@@ -128,8 +128,6 @@ def test_owned_filenames_are_what_we_advertise() -> None:
         {
             "cot-bridge.js",
             "cot-stream.js",
-            "cot-stream-vscode.js",
-            "cot-bridge-vscode.js",
             "cot-stream-codebuddy.js",
             "cot-bridge-codebuddy.js",
             "claude_stream_hook.py",

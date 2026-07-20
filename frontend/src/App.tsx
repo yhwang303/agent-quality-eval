@@ -503,7 +503,7 @@ export default function App() {
                 className={`btn-refresh regression-gold ${regressionReference ? 'is-active' : ''}`}
                 disabled={!abBaseline || !abCandidate}
                 onClick={() => setRegressionGoldOpen(true)}
-                title="为本次回归检测上传标准答案"
+                title="为本次回归检测上传答案或评判资料"
               >
                 {regressionReference ? '已绑定' : 'Gold'}
               </button>
@@ -822,6 +822,7 @@ function ReferenceEvalDialog({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<any | null>(null);
   const [preview, setPreview] = useState<any | null>(null);
+  const [pendingPreview, setPendingPreview] = useState<any | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isRegression = mode === 'regression';
   const busy = saving || loadingExisting;
@@ -834,6 +835,7 @@ function ReferenceEvalDialog({
     if (isRegression) {
       setSaved(initialReference || null);
       setPreview(extractPreview(initialReference));
+      setPendingPreview(null);
       return () => {
         cancelled = true;
       };
@@ -842,6 +844,7 @@ function ReferenceEvalDialog({
     if (!selectedTurn) {
       setSaved(null);
       setPreview(null);
+      setPendingPreview(null);
       return () => {
         cancelled = true;
       };
@@ -854,11 +857,13 @@ function ReferenceEvalDialog({
         const reference = data?.bound ? data.reference_answer : null;
         setSaved(reference);
         setPreview(extractPreview(reference));
+        setPendingPreview(null);
       })
       .catch(() => {
         if (cancelled) return;
         setSaved(null);
         setPreview(null);
+        setPendingPreview(null);
       })
       .finally(() => {
         if (!cancelled) setLoadingExisting(false);
@@ -875,19 +880,45 @@ function ReferenceEvalDialog({
     setError(null);
     setSaved(null);
     setPreview(null);
+    setPendingPreview(null);
     try {
       const content = await file.text();
-      const data = isRegression
-        ? await api.normalizeReferenceAnswer(file.name, content)
-        : await api.saveTurnReferenceAnswer(selectedTurn!.session_id, selectedTurn!.turn_index, file.name, content);
-      setSaved(data);
-      setPreview(extractPreview(data));
-      if (isRegression) onSaveRegressionReference?.(data);
+      const target = !isRegression && selectedTurn
+        ? { session_id: selectedTurn.session_id, turn_index: selectedTurn.turn_index }
+        : undefined;
+      const data = await api.normalizeReferenceAnswer(file.name, content, target);
+      setPendingPreview(data);
+      setPreview(extractPreview(data?.canonical || data));
     } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || '标准答案上传失败'));
+      setError(String(err?.response?.data?.detail || err?.message || '评测资料规整失败'));
     } finally {
       setSaving(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!pendingPreview) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (isRegression) {
+        onSaveRegressionReference?.(pendingPreview);
+        setSaved(pendingPreview);
+      } else if (selectedTurn) {
+        const data = await api.saveTurnReferenceAnswer(
+          selectedTurn.session_id,
+          selectedTurn.turn_index,
+          String(pendingPreview.confirm_token || ''),
+        );
+        setSaved(data);
+        setPreview(extractPreview(data));
+      }
+      setPendingPreview(null);
+    } catch (err: any) {
+      setError(String(err?.response?.data?.detail || err?.message || '评测资料确认失败'));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -902,8 +933,9 @@ function ReferenceEvalDialog({
       }
       setSaved(null);
       setPreview(null);
+      setPendingPreview(null);
     } catch (err: any) {
-      setError(String(err?.response?.data?.detail || err?.message || '清除标准答案失败'));
+      setError(String(err?.response?.data?.detail || err?.message || '清除评测资料失败'));
     } finally {
       setSaving(false);
     }
@@ -914,15 +946,18 @@ function ReferenceEvalDialog({
     : (selectedTurn ? `${selectedTurn.session_id.slice(0, 8)} · 第 ${selectedTurn.turn_index} 轮` : '未选择 trace');
   const expected = String(preview?.expected_answer || '');
   const keywords = Array.isArray(preview?.keywords) ? preview.keywords : [];
+  const mappings = Array.isArray(pendingPreview?.mapping) ? pendingPreview.mapping : [];
+  const warnings = Array.isArray(pendingPreview?.warnings) ? pendingPreview.warnings : [];
+  const rawContent = String(pendingPreview?.raw?.content || '');
 
   return (
     <div className="reference-modal-backdrop" onClick={onClose}>
-      <div className="reference-modal reference-modal-compact" onClick={e => e.stopPropagation()}>
+        <div className={`reference-modal ${pendingPreview ? '' : 'reference-modal-compact'}`} onClick={e => e.stopPropagation()}>
         <div className="reference-modal-head">
           <div>
             <span>{targetText}</span>
-            <strong>标准答案</strong>
-            <p>{isRegression ? '上传用于本次回归检测的标准答案。' : '上传这条 trace 的标准答案。保存后回到主界面点击 Eval，会按该标准评审。'}</p>
+            <strong>评测标准</strong>
+            <p>{isRegression ? '上传现有答案或评判资料，用于本次回归检测。' : '上传现有答案或评判资料，系统会自动识别并规整。'}</p>
           </div>
           <button className="settings-close" onClick={onClose}>×</button>
         </div>
@@ -931,37 +966,74 @@ function ReferenceEvalDialog({
           <div className="reference-control-card">
             <div className="reference-control-top">
               <div>
-                <strong>标准文件</strong>
-                <span>支持 JSON / YAML / Markdown / TXT。系统只做字段规整，不改写答案内容。</span>
+                <strong>答案或评判资料</strong>
+                <span>无需模板。支持 JSON / JSONL / CSV / YAML / Markdown / TXT。</span>
               </div>
               <button className="reference-upload-btn" disabled={busy || (!isRegression && !selectedTurn)} onClick={() => fileInputRef.current?.click()}>
-                {saving ? '保存中...' : loadingExisting ? '读取中...' : '上传'}
+                {saving ? '处理中...' : loadingExisting ? '读取中...' : '选择文件'}
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".json,.yaml,.yml,.md,.markdown,.txt"
+                accept=".json,.jsonl,.csv,.yaml,.yml,.md,.markdown,.txt"
                 style={{ display: 'none' }}
                 onChange={e => handleUpload(e.target.files?.[0])}
               />
             </div>
-            {loadingExisting && <div className="reference-hint">正在读取这条 trace 已绑定的标准答案...</div>}
+            {loadingExisting && <div className="reference-hint">正在读取这条 trace 已绑定的评测资料...</div>}
             {error && <div className="reference-error">{error}</div>}
             {saved && (
               <div className="reference-saved">
                 <div>
                   <strong>已保存</strong>
-                  <span>{isRegression ? '运行回归检测时会带上这个标准答案。' : '回到主界面点击 Eval，即可按这个标准答案评估。'}</span>
+                  <span>{isRegression ? '运行回归检测时会带上这份评测标准。' : '回到主界面点击 Eval，即可按这份标准评估。'}</span>
                 </div>
                 <button className="reference-clear-btn" disabled={busy} onClick={handleClear}>
                   清除绑定
                 </button>
               </div>
             )}
-            {preview && (
+            {pendingPreview && (
+              <>
+                <div className="reference-normalization-status">
+                  <strong>{pendingPreview.eval_mode === 'gold' ? 'Gold 评测依据已识别' : '未识别 Gold 依据，将使用通用 Trace Eval'}</strong>
+                </div>
+                <div className="reference-preview-grid">
+                  <div className="reference-preview">
+                    <span>用户原始文件</span>
+                    <pre>{rawContent}</pre>
+                  </div>
+                  <div className="reference-preview">
+                    <span>规整后的标准结构</span>
+                    <pre>{JSON.stringify(pendingPreview.canonical?.reference_answer || preview, null, 2)}</pre>
+                  </div>
+                </div>
+                <div className="reference-mapping-panel">
+                  <strong>字段映射</strong>
+                  {mappings.length > 0
+                    ? mappings.map((item: any, index: number) => (
+                      <div key={`${item.source_path}-${index}`}>
+                        <code>{item.source_path}</code>
+                        <span>→</span>
+                        <code>{item.canonical_field}</code>
+                      </div>
+                    ))
+                    : <span>未进行字段映射；内容将按通用 Trace Eval 处理。</span>}
+                </div>
+                {warnings.length > 0 && (
+                  <div className="reference-normalization-warnings">
+                    {warnings.map((warning: string, index: number) => <span key={index}>{warning}</span>)}
+                  </div>
+                )}
+                <button className="reference-run-btn" disabled={busy} onClick={handleConfirm}>
+                  {isRegression ? '确认用于本次回归检测' : '确认并绑定到当前 Trace'}
+                </button>
+              </>
+            )}
+            {preview && !pendingPreview && (
               <div className="reference-preview">
-                <span>{preview.title || preview.case_id || '标准答案'}</span>
-                <pre>{expected || '未解析到标准答案内容。'}</pre>
+                <span>{preview.title || preview.case_id || '评测标准'}</span>
+                <pre>{expected || '未解析到标准答案文本，将使用其他已识别的评测依据。'}</pre>
                 {keywords.length > 0 && <em>{keywords.slice(0, 8).join(' / ')}</em>}
               </div>
             )}
@@ -1720,8 +1792,8 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const models: Record<string, string[]> = {
-    timiai: ['gpt-4o-mini', 'gpt-5.4', 'gpt-4o'],
-    deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+    timiai: ['gpt-4o-mini', 'gpt-5.4', 'gpt-4o', 'glm-5.1', 'glm-5.2'],
+    deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro'],
   };
 
   useEffect(() => {

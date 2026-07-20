@@ -99,9 +99,8 @@ export interface ClaudeOtelSpan {
 
 export interface ClaudeOtelData {
   session_id: string;
-  // v0.17.0：标识这条数据来自哪个 IDE 进程；'claude' 是默认值（向后兼容），
-  // VSCode Copilot 上报会被识别成 'vscode'，CodeBuddy 是 'codebuddy'，Codex 是 'codex'。
-  provider?: 'claude' | 'codex' | 'vscode' | 'codebuddy' | string;
+  // 标识这条数据来自哪个 IDE 进程；'claude' 是默认值（向后兼容）。
+  provider?: 'claude' | 'codex' | 'codebuddy' | string;
   events: ClaudeOtelEvent[];
   metrics: ClaudeOtelMetricPoint[];
   spans: ClaudeOtelSpan[];
@@ -127,10 +126,10 @@ export interface ClaudeOtelData {
 
 export interface OtelSessionListItem {
   session_id: string;
-  // v0.17.0：backend 解析 vscode-/codebuddy- 前缀，暴露真实 IDE provider
+  // backend 解析 provider 前缀，暴露真实 IDE provider
   // 与去前缀的裸 session id；前端用 provider 决定徽章颜色 / 默认面板视图。
   bare_session_id?: string;
-  provider?: 'claude' | 'codex' | 'vscode' | 'codebuddy' | string;
+  provider?: 'claude' | 'codex' | 'codebuddy' | string;
   events_bytes: number;
   metrics_bytes: number;
   spans_bytes: number;
@@ -189,14 +188,18 @@ export const api = {
   getTurnReferenceAnswer: (sessionId: string, turnIndex: number): Promise<any> =>
     axios.get(`${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/reference-answer`).then(r => r.data),
 
-  saveTurnReferenceAnswer: (sessionId: string, turnIndex: number, filename: string, content: string): Promise<any> =>
-    axios.post(`${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/reference-answer`, { filename, content }).then(r => r.data),
+  saveTurnReferenceAnswer: (sessionId: string, turnIndex: number, confirmToken: string): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/reference-answer`, { confirm_token: confirmToken }).then(r => r.data),
 
   deleteTurnReferenceAnswer: (sessionId: string, turnIndex: number): Promise<any> =>
     axios.delete(`${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/reference-answer`).then(r => r.data),
 
-  normalizeReferenceAnswer: (filename: string, content: string): Promise<any> =>
-    axios.post(`${API_BASE}/api/evals/reference-answer/normalize`, { filename, content }).then(r => r.data),
+  normalizeReferenceAnswer: (
+    filename: string,
+    content: string,
+    target?: { session_id: string; turn_index: number },
+  ): Promise<any> =>
+    axios.post(`${API_BASE}/api/evals/reference-answer/normalize`, { filename, content, ...(target || {}) }).then(r => r.data),
 
   listReferenceDatasets: (): Promise<{ datasets: any[] }> =>
     axios.get(`${API_BASE}/api/evals/reference-datasets`).then(r => r.data),

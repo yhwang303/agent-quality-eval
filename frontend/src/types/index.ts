@@ -52,7 +52,7 @@ export interface SessionOverview {
   received_at?: string;      // 中央服务收到这份 cot.json 的时间
   // v0.20.7: cot_extractor._detect_agent_type 写的 IDE 来源（前端 SessionList
   // 用它给每个 session 卡片打不同颜色的 IDE 徽章）。
-  agent_type?: 'cursor' | 'claude' | 'codex' | 'codebuddy' | 'vscode' | string | null;
+  agent_type?: 'cursor' | 'claude' | 'codex' | 'codebuddy' | string | null;
 }
 
 // v0.18.0：中央上行用户列表（GET /api/uplink/users）
@@ -465,9 +465,9 @@ export interface SessionCoT {
   user_activity?: UserActivityEntry[];
   // v0.15.0：Claude / Cursor 区分标识 + Claude 独有时间线
   // agent_type 由后端 cot_extractor._detect_agent_type 自动判定。
-  // v0.17.0：扩展支持 vscode / codebuddy；前端按枚举切换徽章颜色和图标。
-  // 'claude' / 'codex' / 'cursor' / 'vscode' / 'codebuddy' / 'unknown'
-  agent_type?: 'claude' | 'codex' | 'cursor' | 'vscode' | 'codebuddy' | 'unknown' | string | null;
+  // 前端按 agent 枚举切换徽章颜色和图标。
+  // 'claude' / 'codex' / 'cursor' / 'codebuddy' / 'unknown'
+  agent_type?: 'claude' | 'codex' | 'cursor' | 'codebuddy' | 'unknown' | string | null;
   // 以下五条 Claude 专属时间线由 cot_extractor / claude_stream_hook 注入；
   // Cursor session 始终为空数组（不打破 schema）。
   subagent_timeline?: SubagentEvent[];

@@ -9,7 +9,7 @@
 //
 // 落盘路径：<DATA_ROOT>/events/codebuddy-<sid>/events.jsonl
 //   DATA_ROOT 默认 ~/.agent-cot/data；agent-cot start 会注入 AGENT_COT_DATA_ROOT
-// 加 ``codebuddy-`` 前缀避免和 Cursor / VSCode / Claude 同 sid 撞车。
+// 加 ``codebuddy-`` 前缀避免和 Cursor / Claude 同 sid 撞车。
 //
 // agent-cot v0.18.6：跟 cursor 的 cot-stream.js 同款修复。
 //   v0.18.5 之前 cot-stream-codebuddy.js 把 events.jsonl 写到

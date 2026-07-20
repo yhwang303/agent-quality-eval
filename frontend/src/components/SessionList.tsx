@@ -54,7 +54,7 @@ function ScoreBadge({ score }: { score: number | null }) {
 }
 
 // v0.20.7: IDE 来源徽章 —— 替代废弃的「无报告」徽章占位，让用户在 SessionList
-// 一眼分辨当前 session 来自 Cursor / Claude / CodeBuddy / VSCode Copilot。
+// 一眼分辨当前 session 来自 Cursor / Claude / Codex / CodeBuddy。
 //
 // 三家配色都走"低饱和度品牌色"——避免左侧列表满屏花花绿绿干扰阅读，
 // 同时 hover / 选中态保持现有视觉规则不变。
@@ -63,13 +63,11 @@ function ScoreBadge({ score }: { score: number | null }) {
 //   * cursor    — 中性 slate 蓝（呼应 Cursor 黑白极简风）
 //   * claude    — 浅 amber/terracotta（Anthropic 品牌琥珀的低饱和版）
 //   * codebuddy — 柔和 teal（呼应 CodeBuddy 蓝绿主色，但调淡）
-//   * vscode    — 浅 sky 蓝（VSCode 招牌色调暗）
 const IDE_META: Record<string, { label: string; cls: string }> = {
   cursor:    { label: 'Cursor',      cls: 'ide-badge-cursor' },
   claude:    { label: 'Claude Code', cls: 'ide-badge-claude' },
   codex:     { label: 'Codex',       cls: 'ide-badge-codex' },
   codebuddy: { label: 'CodeBuddy',   cls: 'ide-badge-codebuddy' },
-  vscode:    { label: 'VSCode',      cls: 'ide-badge-vscode' },
 };
 
 function IdeBadge({ agentType }: { agentType?: string | null }) {

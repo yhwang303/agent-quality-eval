@@ -74,7 +74,7 @@ class InitPlan:
     # (user didn't have them); ``env_preserved`` = recommended keys the
     # user already set, kept as-is (we never overwrite). Both empty when
     # the OTel env path is off or doesn't apply (Cursor / CodeBuddy /
-    # VSCode adapters don't expose recommended_env()).
+    # Non-Claude adapters don't expose recommended_env()).
     env_additions: list[tuple[str, str]] = field(default_factory=list)
     env_preserved: list[tuple[str, str]] = field(default_factory=list)
     otel_env_enabled: bool = False
@@ -295,7 +295,7 @@ def build_plan(
 
     # v0.20.4: Claude OTel env one-shot enablement. ``recommended_env``
     # is duck-typed — only the Claude adapter implements it today; the
-    # other adapters (cursor / codebuddy / vscode) skip this branch
+    # other adapters (cursor / codex / codebuddy) skip this branch
     # silently. Pass ``backend_port=port`` so the endpoint URL points
     # at the **actual** port init just locked in (NOT the historical
     # hardcoded 8765 that silently dropped events on machines with the
@@ -328,7 +328,7 @@ def build_plan(
     # v0.20.6: collect mirror targets from the adapter (Claude uses this to
     # write to BOTH ~/.claude/settings.json and ~/.claude-internal/settings.json
     # when the user has both variants). Adapters that don't implement
-    # ``additional_hooks_targets`` (cursor / codebuddy / vscode) inherit the
+    # ``additional_hooks_targets`` (cursor / codex / codebuddy) inherit the
     # base.py default that returns an empty list.
     additional_targets: list[tuple[Path, Path]] = []
     try:

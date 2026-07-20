@@ -33,6 +33,56 @@ import webbrowser
 from pathlib import Path
 
 APP_TITLE = "Agent Observation"
+APP_BACKGROUND = "#080b12"
+
+# dwmapi.h — values are ignored by older Windows builds that do not support
+# them. Keeping the calls best-effort preserves the browser fallback path.
+_DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY = 19
+_DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+_DWMWA_BORDER_COLOR = 34
+_DWMWA_TEXT_COLOR = 36
+_DWMWA_SYSTEMBACKDROP_TYPE = 38
+_DWMSBT_MAINWINDOW = 2
+
+
+def _apply_window_dwm_theme(hwnd: int, *, _dwmapi: object | None = None) -> None:
+    """Apply dark native chrome without replacing the standard window frame.
+
+    The title-bar buttons, resize affordances, and tray behavior remain native.
+    Every attribute is independent and best-effort because supported DWM
+    attributes vary across Windows 10/11 builds.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+
+        dwmapi = _dwmapi or ctypes.windll.dwmapi
+
+        def set_attribute(attribute: int, value: int) -> bool:
+            try:
+                raw = ctypes.c_int(value)
+                return int(
+                    dwmapi.DwmSetWindowAttribute(
+                        hwnd,
+                        attribute,
+                        ctypes.byref(raw),
+                        ctypes.sizeof(raw),
+                    )
+                ) == 0
+            except Exception:
+                return False
+
+        # Attribute 20 is current; 19 covers pre-20H1 Windows 10.
+        if not set_attribute(_DWMWA_USE_IMMERSIVE_DARK_MODE, 1):
+            set_attribute(_DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY, 1)
+
+        # COLORREF is 0x00BBGGRR. These match the existing application shell.
+        set_attribute(_DWMWA_BORDER_COLOR, 0x00120B08)
+        set_attribute(_DWMWA_TEXT_COLOR, 0x00F2EEE8)
+        set_attribute(_DWMWA_SYSTEMBACKDROP_TYPE, _DWMSBT_MAINWINDOW)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +382,7 @@ def run_app() -> bool:
             width=1360,
             height=880,
             min_size=(1024, 680),
-            background_color="#0b1120",
+            background_color=APP_BACKGROUND,
             text_select=True,
         )
     except Exception:
@@ -372,15 +422,18 @@ def run_app() -> bool:
                 pass
             state["icon"] = _start_tray(window, port, _quit_now)
             window.load_url(f"http://127.0.0.1:{port}/")
-            # Best-effort: apply the branded window icon after the window is up.
+            # Best-effort: apply native dark chrome and the branded icon after
+            # the window is up.
             try:
                 ico = _ico_path()
-                if ico is not None and sys.platform == "win32":
+                if sys.platform == "win32":
                     import ctypes
                     # Look up hwnd by unique title (pywebview doesn't expose it).
                     hwnd = ctypes.windll.user32.FindWindowW(None, APP_TITLE)
                     if hwnd:
-                        _apply_window_icon(hwnd, ico)
+                        _apply_window_dwm_theme(hwnd)
+                        if ico is not None:
+                            _apply_window_icon(hwnd, ico)
             except Exception:
                 pass
         except Exception as exc:  # pragma: no cover - defensive
