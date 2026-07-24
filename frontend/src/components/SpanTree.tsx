@@ -442,7 +442,7 @@ function getStepNodeLabel(step: ThoughtStep): string {
           suffix = ` · ${subj.trim().slice(0, 24)}${subj.length > 24 ? '…' : ''}`;
         }
       } else if (tool === 'TaskUpdate') {
-        const tid = step.metadata?.tool_input?.taskId;
+        const tid = step.metadata?.plan_display_task_id ?? step.metadata?.tool_input?.taskId;
         const st = step.metadata?.tool_input?.status;
         if (tid != null || (typeof st === 'string' && st)) {
           suffix = ` · #${tid ?? '?'} → ${st ?? '?'}`;

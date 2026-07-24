@@ -494,6 +494,7 @@ def _enrich_codex_plan_timeline(turns: list[dict[str, Any]]) -> list[dict[str, A
     timeline: list[dict[str, Any]] = []
     prev: list[dict[str, Any]] | None = None
     for turn in turns:
+        turn_snapshot_idx = 0
         for step in turn.get("steps") or []:
             if (
                 not isinstance(step, dict)
@@ -515,7 +516,7 @@ def _enrich_codex_plan_timeline(turns: list[dict[str, Any]]) -> list[dict[str, A
             md["tool_input"] = {"todos": todos}
             md["plan_full_todos"] = todos
             md["plan_diff"] = diff
-            md["plan_snapshot_idx"] = snapshot_idx
+            md["plan_snapshot_idx"] = turn_snapshot_idx
             md["plan_total"] = len(todos)
             md["plan_completed_count"] = int(counts.get("completed", 0))
             md["plan_in_progress_count"] = int(counts.get("in_progress", 0))
@@ -555,6 +556,7 @@ def _enrich_codex_plan_timeline(turns: list[dict[str, Any]]) -> list[dict[str, A
                 }
             )
             prev = todos
+            turn_snapshot_idx += 1
     return timeline
 
 

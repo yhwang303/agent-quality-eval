@@ -330,6 +330,30 @@ def _normalize_evidence_list(value: Any) -> list[dict[str, str]]:
     return out
 
 
+def _is_final_response_ref(item: dict[str, str]) -> bool:
+    ref = str(item.get("ref") or "").strip().lower()
+    source = str(item.get("source") or "").strip().lower()
+    return ref in {"final_response", "final-response"} or source in {"final_response", "final-response"}
+
+
+def _compact_claim_text(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "")).strip().lower()
+
+
+def _filter_claim_evidence(claim: str, evidence: list[dict[str, str]]) -> list[dict[str, str]]:
+    claim_key = _compact_claim_text(claim)
+    if not claim_key:
+        return evidence
+    return [
+        item for item in evidence
+        if not (_is_final_response_ref(item) and _compact_claim_text(item.get("quote") or "") == claim_key)
+    ]
+
+
+def _has_independent_claim_evidence(evidence: list[dict[str, str]]) -> bool:
+    return any(not _is_final_response_ref(item) for item in evidence)
+
+
 def _cap_evidence_keeping_required(items: list[Any], required_refs: set[str], max_total: int = 8) -> list[Any]:
     """Trim an evidence list to `max_total` items without ever dropping the
     deterministically-guaranteed entries in `required_refs` (a naive [:N]
@@ -471,12 +495,15 @@ def _normalize_claims(value: Any) -> list[dict[str, Any]]:
             verified = verified_raw
         else:
             verified = None
+        evidence = _filter_claim_evidence(text, _normalize_evidence_list(item.get("evidence")))
+        if verified is True and not _has_independent_claim_evidence(evidence):
+            verified = None
         out.append(
             {
                 "claim": text[:240],
                 "type": ctype,
                 "verified": verified,
-                "evidence": _normalize_evidence_list(item.get("evidence")),
+                "evidence": evidence,
             }
         )
         if len(out) >= 12:

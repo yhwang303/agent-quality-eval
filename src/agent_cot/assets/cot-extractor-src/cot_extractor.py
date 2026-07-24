@@ -4307,6 +4307,7 @@ def _build_plan_timeline_from_task_tools(
     # TaskUpdate 引用的 taskId 在我们的 tasks 列表里找不到（subagent 的
     # 内部任务有时不会作为顶层 tool_use 出现），直接静默跳过即可。
     tasks: List[Dict] = []
+    tasks_by_id: Dict[str, Dict] = {}
     snap_idx = 0
     # 每个 turn 独立的 plan 序号（前端展示 "#N"）；跨 turn 时重置到 0，避免
     # 一个 session 里 turn N 出现 "Plan #10"、turn N+1 出现 "Plan #11" 的
@@ -4314,11 +4315,15 @@ def _build_plan_timeline_from_task_tools(
     # TaskCreate 出的 id），跟展示编号无关。
     per_turn_idx = 0
     prev_turn_index: Optional[int] = None
+    current_turn_task_ids: List[str] = []
+    prev_todos_full: Optional[List[Dict]] = None
 
     for turn in turns_cot:
         if prev_turn_index is None or turn.turn_index != prev_turn_index:
             per_turn_idx = 0
             prev_turn_index = turn.turn_index
+            current_turn_task_ids = []
+            prev_todos_full = None
         for s in turn.steps:
             if s.step_type != StepType.TOOL_DECISION:
                 continue
@@ -4337,22 +4342,24 @@ def _build_plan_timeline_from_task_tools(
                         break
                 if not content:
                     continue
-                tasks.append({
-                    "id": new_id,
+                task = {
+                    "source_id": new_id,
                     "content": content,
                     "status": "pending",
-                })
+                }
+                tasks.append(task)
+                tasks_by_id[new_id] = task
+                current_turn_task_ids.append(new_id)
             else:  # TaskUpdate
                 raw_id = ti.get("taskId")
                 if raw_id is None:
                     continue
                 target_id = str(raw_id)
-                target = next(
-                    (t for t in tasks if str(t.get("id")) == target_id),
-                    None,
-                )
+                target = tasks_by_id.get(target_id)
                 if target is None:
                     continue
+                if target_id not in current_turn_task_ids:
+                    current_turn_task_ids.append(target_id)
                 new_status = ti.get("status")
                 if isinstance(new_status, str) and new_status.strip():
                     target["status"] = new_status.strip().lower()
@@ -4364,12 +4371,14 @@ def _build_plan_timeline_from_task_tools(
 
             full_todos: List[Dict] = [
                 {
-                    "id": t["id"],
+                    "id": str(idx + 1),
+                    "source_id": source_id,
                     "content": t["content"],
                     "status": t.get("status", "pending"),
                     "idx": idx,
                 }
-                for idx, t in enumerate(tasks)
+                for idx, source_id in enumerate(current_turn_task_ids)
+                for t in [tasks_by_id[source_id]]
             ]
             snap = PlanSnapshot(
                 at_step=s.step_index,
@@ -4390,13 +4399,19 @@ def _build_plan_timeline_from_task_tools(
                 else:
                     snap.pending.append(content)
             snap.todos = full_todos
-            prev_full = timeline[-1].todos if timeline else None
             try:
-                snap.diff = _diff_todos(prev_full, full_todos, merge_mode=False)
+                snap.diff = _diff_todos(prev_todos_full, full_todos, merge_mode=False)
             except Exception:
                 snap.diff = None
 
             md = s.metadata if isinstance(s.metadata, dict) else {}
+            raw_task_id = str(ti.get("taskId") or "")
+            if tn == "TaskCreate":
+                raw_task_id = new_id
+            if raw_task_id:
+                md["plan_source_task_id"] = raw_task_id
+                if raw_task_id in current_turn_task_ids:
+                    md["plan_display_task_id"] = str(current_turn_task_ids.index(raw_task_id) + 1)
             md["plan_snapshot_idx"] = per_turn_idx
             md["plan_diff"] = snap.diff
             md["plan_total"] = len(full_todos)
@@ -4408,6 +4423,7 @@ def _build_plan_timeline_from_task_tools(
             s.metadata = md
 
             timeline.append(snap)
+            prev_todos_full = full_todos
             snap_idx += 1
             per_turn_idx += 1
 

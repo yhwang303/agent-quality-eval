@@ -106,6 +106,47 @@ def test_normalize_claims_filters_and_types_correctly():
     assert claims[0]["evidence"] and claims[0]["evidence"][0]["ref"] == "step:5"
 
 
+def test_normalize_claims_drops_final_response_self_evidence():
+    claims = critic._normalize_claims(
+        [
+            {
+                "claim": "修复了会导致 Agent 混淆的核心缺陷",
+                "type": "quality",
+                "verified": True,
+                "evidence": [
+                    {
+                        "ref": "final_response",
+                        "quote": "修复了会导致 Agent 混淆的核心缺陷",
+                        "source": "FINAL_RESPONSE",
+                    }
+                ],
+            },
+            {
+                "claim": "输出目录改成 summary/sessions/",
+                "type": "factual",
+                "verified": True,
+                "evidence": [
+                    {
+                        "ref": "tool_call#1",
+                        "quote": "Task #38 created successfully: 输出目录改成 summary/sessions/",
+                        "source": "TOOL_RESULT",
+                    },
+                    {
+                        "ref": "final_response",
+                        "quote": "输出目录改成 summary/sessions/",
+                        "source": "FINAL_RESPONSE",
+                    },
+                ],
+            },
+        ]
+    )
+
+    assert claims[0]["verified"] is None
+    assert claims[0]["evidence"] == []
+    assert claims[1]["verified"] is True
+    assert [e["ref"] for e in claims[1]["evidence"]] == ["tool_call#1"]
+
+
 def test_classify_assertion_pattern_covers_four_diagnostics():
     assert classify_assertion_pattern(baseline_passed=True, candidate_passed=True) == ASSERTION_PATTERNS["non_discriminating"]
     assert classify_assertion_pattern(baseline_passed=False, candidate_passed=False) == ASSERTION_PATTERNS["always_failing"]

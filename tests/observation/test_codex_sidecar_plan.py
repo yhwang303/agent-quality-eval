@@ -69,18 +69,41 @@ def test_codex_update_plan_becomes_plan_timeline(tmp_path: Path) -> None:
                 ),
             },
         },
+        {
+            "timestamp": "2026-06-15T03:00:04.000Z",
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "now do the follow-up"},
+        },
+        {
+            "timestamp": "2026-06-15T03:00:05.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "update_plan",
+                "call_id": "call_plan_3",
+                "arguments": json.dumps(
+                    {
+                        "plan": [
+                            {"step": "Handle follow-up", "status": "in_progress"},
+                            {"step": "Report result", "status": "pending"},
+                        ]
+                    }
+                ),
+            },
+        },
     ]
     rollout.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
 
     cot = collector._build_cot(rollout)
 
     assert cot is not None
-    assert cot["tool_call_distribution"]["TodoWrite"] == 2
-    assert len(cot["plan_timeline"]) == 2
-    first, second = cot["plan_timeline"]
+    assert cot["tool_call_distribution"]["TodoWrite"] == 3
+    assert len(cot["plan_timeline"]) == 3
+    first, second, third = cot["plan_timeline"]
     assert first["completed"] == ["Audit inputs"]
     assert first["in_progress"] == ["Patch collector"]
     assert second["completed"] == ["Audit inputs", "Patch collector", "Run tests"]
+    assert third["in_progress"] == ["Handle follow-up"]
     assert second["diff"]["newly_completed"] == [
         {"id": "2", "content": "Patch collector"},
         {"id": "3", "content": "Run tests"},
@@ -99,6 +122,7 @@ def test_codex_update_plan_becomes_plan_timeline(tmp_path: Path) -> None:
         "idx": 1,
     }
     assert plan_steps[1]["metadata"]["plan_completed_count"] == 3
+    assert [step["metadata"]["plan_snapshot_idx"] for step in plan_steps] == [0, 1, 0]
 
 
 def test_codex_new_tool_names_are_display_names(tmp_path: Path) -> None:

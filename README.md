@@ -14,7 +14,7 @@ double-click, and start observing and grading your agent sessions.
 1. Grab the latest release exe:
 
    ```
-   dist/agent-quality-eval-1.0.7.exe
+   dist/agent-quality-eval-1.0.9.exe
    ```
 
 2. Double-click it. On first run it will:
@@ -97,25 +97,25 @@ dashboard" mode to command mode:
 
 ```powershell
 # health check
-.\dist\agent-quality-eval-1.0.7.exe doctor
+.\dist\agent-quality-eval-1.0.9.exe doctor
 
 # initialize workspace manually (usually not needed — first run does it)
-.\dist\agent-quality-eval-1.0.7.exe init
+.\dist\agent-quality-eval-1.0.9.exe init
 
 # run an eval pipeline
-.\dist\agent-quality-eval-1.0.7.exe eval run .\examples\gold-standard-eval-suite\gold-standard-suite.yaml
+.\dist\agent-quality-eval-1.0.9.exe eval run .\examples\gold-standard-eval-suite\gold-standard-suite.yaml
 
 # compare two experiments
-.\dist\agent-quality-eval-1.0.7.exe eval compare --baseline <experiment_id> --candidate <experiment_id>
+.\dist\agent-quality-eval-1.0.9.exe eval compare --baseline <experiment_id> --candidate <experiment_id>
 
 # regression gate (non-zero exit on regression)
-.\dist\agent-quality-eval-1.0.7.exe eval regression --baseline <experiment_id> --candidate <experiment_id>
+.\dist\agent-quality-eval-1.0.9.exe eval regression --baseline <experiment_id> --candidate <experiment_id>
 
 # promote a baseline
-.\dist\agent-quality-eval-1.0.7.exe eval promote-baseline <experiment_id>
+.\dist\agent-quality-eval-1.0.9.exe eval promote-baseline <experiment_id>
 
 # observation passthrough (starts the observation runtime)
-.\dist\agent-quality-eval-1.0.7.exe observe start
+.\dist\agent-quality-eval-1.0.9.exe observe start
 ```
 
 `--help` on any subcommand lists all options.
@@ -145,7 +145,7 @@ pyinstaller agent-quality-eval.spec
 ```
 
 The current on-disk version comes from `src/agent_quality_eval/__init__.py`
-and `pyproject.toml` (both `1.0.7`).
+and `pyproject.toml` (both `1.0.9`).
 
 ---
 
