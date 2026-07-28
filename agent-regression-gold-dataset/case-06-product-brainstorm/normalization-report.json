@@ -1,0 +1,63 @@
+{
+  "schema_version": "gold-normalization-report-v1",
+  "mode": "llm-assisted-schema-normalization",
+  "mapping": [
+    {
+      "source_path": "question",
+      "canonical_field": "question",
+      "conversion": "direct"
+    },
+    {
+      "source_path": "expected_answer",
+      "canonical_field": "expected_answer",
+      "conversion": "direct"
+    },
+    {
+      "source_path": "rubric",
+      "canonical_field": "rubric",
+      "conversion": "direct"
+    },
+    {
+      "source_path": "deterministic_case.expected_answer",
+      "canonical_field": "expected_answer",
+      "conversion": "LLM-assisted normalization"
+    },
+    {
+      "source_path": "semantic extraction",
+      "canonical_field": "question",
+      "conversion": "LLM-assisted normalization"
+    },
+    {
+      "source_path": "semantic extraction",
+      "canonical_field": "process_requirements",
+      "conversion": "LLM-assisted normalization"
+    },
+    {
+      "source_path": "deterministic_case.rubric",
+      "canonical_field": "rubric",
+      "conversion": "LLM-assisted normalization"
+    },
+    {
+      "source_path": "deterministic_case.keywords",
+      "canonical_field": "keywords",
+      "conversion": "LLM-assisted normalization"
+    }
+  ],
+  "warnings": [
+    "Configured Judge was used to identify or derive missing Gold fields; review the normalized result before confirming."
+  ],
+  "unmapped_fields": [
+    "id",
+    "title"
+  ],
+  "has_gold_evidence": true,
+  "eval_mode": "gold",
+  "canonical_hash": "7835bb6bddddbe07",
+  "llm_normalization": {
+    "status": "completed",
+    "provider": "timiai",
+    "model": "gpt-4o-mini",
+    "latency_ms": 5499,
+    "cache_hit": false
+  }
+}

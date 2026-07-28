@@ -4,6 +4,7 @@ import type {
   ThoughtStep, InvocationCategory, ScriptArtifact, SessionCoT, TurnCoT,
   OtelTokenUsage, TurnEvalReport,
 } from '../types';
+import { api, saveDownloadedFile } from '../hooks/api';
 // v0.16.1: 旧 OtlpExportDialog（hero "🚀 导出到 OTel" 按钮）已从 SessionDetail 移除。
 // ClaudeOtelPanel 已搬入右侧 OTel tab（OtelPanel 内）；这里不再需要它们的 import。
 
@@ -544,6 +545,10 @@ function TurnOtelKpiBar({ cot, turn }: { cot: SessionCoT; turn: TurnCoT }) {
     const tu: OtelTokenUsage | undefined = (s as any).otel?.token_usage;
     if (!tu) continue;
     if ((s as any).otel?.step_kind === 'llm_call') llmCount++;
+    // 跟 readTurnUsage 用同一条规则：non_llm_step 的 token 是工具入参与结果的
+    // 字符估算，模型没产出过，混进来会让本轮 token 虚高（实测一条 cursor turn
+    // 从 4.4K/26.0K 涨到 9.1K/33.7K）。
+    if ((tu as any).cost_reason === 'non_llm_step') continue;
     inTok += tu.input_tokens || 0;
     outTok += tu.output_tokens || 0;
     if (typeof tu.cost_usd === 'number') {
@@ -624,6 +629,48 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="dp-section-title">{title}</div>
       {children}
     </div>
+  );
+}
+
+// ─── eval 结果导出 ────────────────────────────────────────
+// 导的是这一轮报告的全量内容：断言明细、维度打分、safety gate、以及 hook
+// 阶段 Agent Critic 的 provenance。用 JSON 而不是 trace 那边的 jsonl ——
+// 报告是一个嵌套文档，不是按时间推进的事件流。
+function TurnEvalExportButton({
+  sessionId, turnIndex,
+}: {
+  sessionId: string; turnIndex: number;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState('');
+
+  const download = async () => {
+    setBusy(true);
+    setFailed('');
+    try {
+      await saveDownloadedFile(await api.downloadTurnEval(sessionId, turnIndex));
+    } catch (e: any) {
+      // 失败必须看得见。一个点了毫无反应的按钮比报错更难排查。
+      const msg = e?.message || String(e);
+      setFailed(msg);
+      if (msg !== '已取消保存') window.alert(`导出评估结果失败：${msg}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={`dp-eval-export${failed ? ' dp-eval-export-failed' : ''}`}
+      disabled={busy}
+      title={failed
+        ? `导出失败：${failed}`
+        : '导出本轮完整评估结果（断言明细 / 维度面板 / hook 阶段评审）'}
+      onClick={download}
+    >
+      {busy ? '⏳' : '⬇'} {failed ? '导出失败' : '导出'}
+    </button>
   );
 }
 
@@ -1061,7 +1108,13 @@ function TurnEvalReportCard({
         <div className="dp-eval-dashboard-head">
           <div>
             <div className="dp-eval-eyebrow">第 {report.turn_index} 轮</div>
-            <div className="dp-eval-title">Agent 评估维度面板</div>
+            <div className="dp-eval-title">
+              Agent 评估维度面板
+              <TurnEvalExportButton
+                sessionId={report.session_id}
+                turnIndex={report.turn_index}
+              />
+            </div>
             <div className="dp-eval-status">{provenanceText}</div>
           </div>
         </div>

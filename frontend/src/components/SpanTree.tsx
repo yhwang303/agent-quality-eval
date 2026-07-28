@@ -1,7 +1,12 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import type { SessionCoT, SessionOverview, ResponseReport, TurnCoT, ThoughtStep, TurnEvalReport } from '../types';
 import { ClaudeToolStatsCompact } from './ClaudeOtelPanel';
-import { api, type ClaudeOtelData, type ClaudeOtelEvent } from '../hooks/api';
+import {
+  api,
+  saveDownloadedFile,
+  type ClaudeOtelData,
+  type TraceEvent,
+} from '../hooks/api';
 
 // 思考 → 工具 → 更多思考 —— 用 step_index 的原顺序渲染，
 // 让 tool_decision/tool_execution 紧跟在触发它的 thinking 步骤之后。
@@ -813,139 +818,114 @@ function stepTsMs(s: ThoughtStep): number {
   return 0;
 }
 
-function buildRenderGroups(steps: ThoughtStep[]): RenderGroup[] {
-  const groups: RenderGroup[] = [];
-  // v0.16.5: sort 用 stepTsMs 优先（observed_at_ms or timestamp），让 OTel
-  // 注入的孤儿虚拟 step（subagent 内部嵌套调用）跟主 transcript step 按
-  // 真实时间穿插。ts 缺失或同值时 fallback 到 step_index 保持稳定。
-  const sorted = [...steps].sort((a, b) => {
-    const ta = stepTsMs(a);
-    const tb = stepTsMs(b);
-    if (ta > 0 && tb > 0 && ta !== tb) return ta - tb;
-    return a.step_index - b.step_index;
-  });
-  let current: RenderGroup | null = null;
-
-  const isToolish = (s: ThoughtStep) =>
-    s.step_type === 'tool_decision' ||
-    s.step_type === 'tool_execution' ||
-    s.step_type === 'strategy_shift' ||
-    s.step_type === 'error_recovery';
-
-  for (const s of sorted) {
-    if (isToolish(s)) {
-      if (!current) {
-        // 没有前导 thinking，开一个"隐式"组
-        current = { leader: null, tools: [] };
-        groups.push(current);
-      }
-      current.tools.push(s);
-    } else {
-      current = { leader: s, tools: [] };
-      groups.push(current);
-    }
-  }
-
-  // v0.16.2: tool_decision/tool_execution 按 tool_use_id 配对重排。
-  // Claude 一次回复里如果并发触发多个 tool_use（例如同时读两个文件），
-  // transcript 真实顺序是 D1 D2 E1 E2（assistant 一条多 tool_use，user
-  // 一条多 tool_result）。直接按 step_index 渲染就成了用户截图里的
-  // "DDEE 堆叠" 观感。这里在 group 内做"把 execution 移到对应 decision
-  // 后面"的稳定重排——只动 tool_execution 节点，其他类型（strategy_shift /
-  // error_recovery / 孤儿 D / 孤儿 E）保持原相对顺序。
-  for (const g of groups) {
-    g.tools = pairToolDecisionExecution(g.tools);
-  }
-
-  return groups;
-}
-
-function pairToolDecisionExecution(tools: ThoughtStep[]): ThoughtStep[] {
-  if (tools.length < 2) return tools;
-  // 1) 把每个 tool_use_id 对应的 decision step 索引记下来
-  const decisionIdxByUseId = new Map<string, number>();
-  for (let i = 0; i < tools.length; i++) {
-    const t = tools[i];
-    if (t.step_type !== 'tool_decision') continue;
-    const useId = (t.tool_use_id || (t.metadata as any)?.tool_use_id || '') as string;
-    if (useId && !decisionIdxByUseId.has(useId)) {
-      decisionIdxByUseId.set(useId, i);
-    }
-  }
-  if (decisionIdxByUseId.size === 0) return tools;
-  // 2) 第一个能配上对应 decision 的 execution，被 inline 插到 decision 后面
-  const inlineAfter = new Map<number, ThoughtStep>();
-  const consumed = new Set<number>();
-  for (let i = 0; i < tools.length; i++) {
-    const t = tools[i];
-    if (t.step_type !== 'tool_execution') continue;
-    const useId = (t.tool_use_id || (t.metadata as any)?.tool_use_id || '') as string;
-    if (!useId) continue;
-    const decIdx = decisionIdxByUseId.get(useId);
-    if (decIdx == null) continue;
-    if (inlineAfter.has(decIdx)) continue;  // 同 decision 已经配过一次了
-    inlineAfter.set(decIdx, t);
-    consumed.add(i);
-  }
-  if (inlineAfter.size === 0) return tools;
-  // 3) 重组：跳过被 consumed 的 execution；遇到 decision 立刻追加它的 execution
-  const out: ThoughtStep[] = [];
-  for (let i = 0; i < tools.length; i++) {
-    if (consumed.has(i)) continue;  // execution 已经被搬走
-    const t = tools[i];
-    out.push(t);
-    if (t.step_type === 'tool_decision' && inlineAfter.has(i)) {
-      out.push(inlineAfter.get(i)!);
-    }
-  }
-  return out;
-}
-
-// 把"连续 ≥2 个 leader 是 thinking_explicit 且没有附属 tools"的组
-// 合并为单个 ThinkingPhaseGroup。带 tools 的 thinking_explicit（即推理后立即
-// 调了工具）保持原样，因为这种思考是工具决策的"理由说明"，必须紧贴对应工具。
+// 把后端 /api/sessions/<sid>/timeline 的有序事件流还原成渲染分组。
 //
-// v0.15.0：treatPreToolAsThinking 打开后，连续 pre_tool_reasoning（无 tools
-// 跟随）也作为 thinking phase 折叠。给 Claude 未启用 ext-thinking 用。
-function mergeThinkingPhases(
-  groups: RenderGroup[],
-  opts?: { treatPreToolAsThinking?: boolean },
+// 前端不再自己排序。顺序（含 thinking 折叠、D-E 配对、并行事件穿插位置）
+// 全部由后端 agent_cot.trace 算好，导出用的是同一份结果——UI 和导出因此
+// 不可能漂移。这里只做两件事：
+//   1. 用 step_index 把事件 join 回完整的 ThoughtStep（事件本身是投影，
+//      不带 metadata / otel / reasoning_digest，DetailPanel 还要用）；
+//   2. 按 group_id / role / phase_id 重建 RenderGroup 与 ThinkingPhaseGroup。
+function groupsFromTimeline(
+  events: TraceEvent[],
+  turn: TurnCoT,
+  agentType: string,
 ): AnyGroup[] {
+  const byStepIndex = new Map<number, ThoughtStep>();
+  for (const s of turn.steps) byStepIndex.set(s.step_index, s);
+
   const out: AnyGroup[] = [];
-  let buf: ThoughtStep[] = [];
-  const flush = () => {
-    if (buf.length === 0) return;
-    if (buf.length === 1) {
-      out.push({ leader: buf[0], tools: [] });
-    } else {
-      out.push({
-        kind: 'phase',
-        thoughts: buf,
-        firstIndex: buf[0].step_index,
-        lastIndex: buf[buf.length - 1].step_index,
-      });
+  let currentGroup: RenderGroup | null = null;
+  let currentGroupId: number | null = null;
+  let currentPhase: ThinkingPhaseGroup | null = null;
+  let currentPhaseId: number | null = null;
+  let virtIdx = 0;
+
+  for (const ev of events) {
+    if (ev.turn !== turn.turn_index) continue;
+    if (ev.type === 'turn_start') continue;
+    // 后端已经标好「当前 UI 不渲染」的事件（环境事件、权限档位切换、
+    // 落在 turn 时间窗外的、以及无时间戳排不进顺序的）
+    if (ev.in_ui === false || ev.ordered === false) continue;
+
+    const step = resolveTimelineStep(ev, byStepIndex, agentType, virtIdx);
+    if (!step) continue;
+    if (ev.step_index == null || !byStepIndex.has(ev.step_index)) virtIdx++;
+
+    if (ev.phase_id != null) {
+      if (!currentPhase || currentPhaseId !== ev.phase_id) {
+        currentPhase = {
+          kind: 'phase',
+          thoughts: [],
+          firstIndex: step.step_index,
+          lastIndex: step.step_index,
+        };
+        out.push(currentPhase);
+        currentPhaseId = ev.phase_id;
+        currentGroup = null;
+        currentGroupId = null;
+      }
+      currentPhase.thoughts.push(step);
+      currentPhase.lastIndex = step.step_index;
+      continue;
     }
-    buf = [];
-  };
-  const isThinkingLikeStandalone = (g: RenderGroup): boolean => {
-    if (!g.leader || g.tools.length > 0) return false;
-    if (g.leader.step_type === 'thinking_explicit') return true;
-    if (
-      opts?.treatPreToolAsThinking
-      && g.leader.step_type === 'pre_tool_reasoning'
-    ) return true;
-    return false;
-  };
-  for (const g of groups) {
-    if (isThinkingLikeStandalone(g) && g.leader) {
-      buf.push(g.leader);
-    } else {
-      flush();
-      out.push(g);
+    currentPhase = null;
+    currentPhaseId = null;
+
+    if (currentGroup === null || ev.group_id !== currentGroupId || ev.role === 'leader') {
+      currentGroup = { leader: ev.role === 'child' ? null : step, tools: [] };
+      currentGroupId = ev.group_id ?? null;
+      out.push(currentGroup);
+      if (ev.role === 'child') currentGroup.tools.push(step);
+      continue;
     }
+    currentGroup.tools.push(step);
   }
-  flush();
   return out;
+}
+
+// 事件 → ThoughtStep。三种来源：
+//   * 主步流：按 step_index 取回完整对象
+//   * hook 事件（子代理 / 权限 / 通知 / 压缩）：合成虚拟 step 走 ClaudeEventInline
+//   * OTel 孤儿工具调用：subagent 内部的调用，主 transcript 里没有，合成一个
+function resolveTimelineStep(
+  ev: TraceEvent,
+  byStepIndex: Map<number, ThoughtStep>,
+  agentType: string,
+  virtIdx: number,
+): ThoughtStep | null {
+  if (ev.step_index != null) {
+    const real = byStepIndex.get(ev.step_index);
+    if (real) return real;
+  }
+  if (CLAUDE_EVENT_KINDS.has(ev.type)) {
+    return makeClaudeEventStep(
+      { kind: ev.type as ClaudeEventKind, payload: ev.payload, t_ms: ev.t_ms || 0, agentType },
+      virtIdx,
+    );
+  }
+  if (ev.type === 'tool_call' || ev.type === 'tool_result') {
+    return {
+      step_index: 1_000_000 + virtIdx,
+      turn_index: ev.turn ?? 0,
+      step_type: ev.type === 'tool_call' ? 'tool_decision' : 'tool_execution',
+      content: ev.content || '',
+      tool_name: ev.tool || 'tool',
+      tool_use_id: ev.tool_use_id || '',
+      metadata: {
+        observed_at_ms: ev.t_ms,
+        tool_name: ev.tool,
+        tool_use_id: ev.tool_use_id,
+        tool_input: ev.payload,
+        is_error: ev.is_error,
+        _otel_orphan: ev.otel_orphan,
+      } as any,
+      timestamp: ev.ts || '',
+      duration_ms: ev.duration_ms ?? null,
+      tokens: ev.tokens ?? 0,
+    } as any;
+  }
+  return null;
 }
 
 // 跟 DetailPanel 用的同款首句抽取，复制一份避免循环依赖
@@ -959,23 +939,18 @@ function extractThoughtTitleSpanTree(text: string, maxLen = 100): string {
   return s;
 }
 
-// ─── Claude 时间线穿插（v0.16.5）─────────────────────────
-// 之前的 v0.16.4 把 4 类 hook events（subagent / perm / notif / compact）
-// 渲染成 4 个独立大区块、堆在 turn 末尾——用户的真实诉求是"按时间线穿插
-// 到对应 tool_decision 之前/之后"，跟 transcript 步流自然交织。
-//
-// 思路：
-//  1. 把每条 hook event 转成虚拟 ThoughtStep（step_type='claude_event_*'），
-//     带上 _t_ms / _claude_event_payload 等元信息；
-//  2. 给每个 RenderGroup 计算 startTs（leader.observed_at_ms 优先；否则
-//     leader.timestamp 解析；都没就回退到第一个 tool）；
-//  3. 把每条 event 落到 startTs ≤ ev.t_ms 最右、且非 phase 的 RenderGroup，
-//     再按 ev.t_ms 与 group.tools 内已有 step 的 ts 比较，在 tools 数组中
-//     插到合适位置——保留 D-E 配对（已经过 pairToolDecisionExecution）；
-//  4. 渲染时识别 step.step_type.startsWith('claude_event_')，走 ClaudeEventInline
-//     而不是 StepNode；data-claude-section 让 turn header 上的徽章仍能 scrollIntoView。
+// ─── Claude 时间线事件 ───────────────────────────────────
+// 4 类 hook events（subagent / perm / notif / compact）不是主步流的一部分，
+// 后端 agent_cot.trace 已经按真实时刻把它们穿插进事件流的正确位置，这里只负责
+// 把单条事件转成虚拟 ThoughtStep：渲染时识别 step_type.startsWith('claude_event_')
+// 走 ClaudeEventInline 而不是 StepNode；data-claude-section 让 turn header 上的
+// 徽章仍能 scrollIntoView。
 
 type ClaudeEventKind = 'subagent' | 'permission' | 'notification' | 'compact';
+
+const CLAUDE_EVENT_KINDS = new Set<string>([
+  'subagent', 'permission', 'notification', 'compact',
+]);
 
 interface ClaudeEventEntry {
   kind: ClaudeEventKind;
@@ -1013,63 +988,6 @@ function isClaudeEventStep(s: ThoughtStep): boolean {
       (s as any).step_type.startsWith('claude_event_')
       || (s as any).step_type.startsWith('codex_event_')
     );
-}
-
-function groupStartTs(g: AnyGroup): number {
-  if ('kind' in g && g.kind === 'phase') {
-    return stepTsMs(g.thoughts[0]);
-  }
-  const rg = g as RenderGroup;
-  if (rg.leader) {
-    const t = stepTsMs(rg.leader);
-    if (t > 0) return t;
-  }
-  for (const t of rg.tools) {
-    const tt = stepTsMs(t);
-    if (tt > 0) return tt;
-  }
-  return 0;
-}
-
-function interleaveClaudeEventsIntoGroups(
-  groups: AnyGroup[],
-  events: ClaudeEventEntry[],
-): AnyGroup[] {
-  if (events.length === 0) return groups;
-  const startTsArr = groups.map(groupStartTs);
-  const eventsSorted = [...events]
-    .filter(e => typeof e.t_ms === 'number' && e.t_ms > 0)
-    .sort((a, b) => a.t_ms - b.t_ms);
-  let virtIdx = 0;
-  for (const ev of eventsSorted) {
-    let target = -1;
-    for (let i = 0; i < groups.length; i++) {
-      const ts = startTsArr[i];
-      if (ts <= 0) continue;
-      if (ts > ev.t_ms) break;
-      // 只往 RenderGroup 注入；phase 内部不挂 events（hook events 一般伴随
-      // tool_decision，落到 phase 内部的概率极低；落到 phase 之间时挂到前一个 RG）
-      if (!('kind' in groups[i])) target = i;
-    }
-    if (target < 0) {
-      for (let i = 0; i < groups.length; i++) {
-        if (!('kind' in groups[i])) { target = i; break; }
-      }
-    }
-    if (target < 0) continue;
-    const rg = groups[target] as RenderGroup;
-    const virt = makeClaudeEventStep(ev, virtIdx++);
-    let insIdx = rg.tools.length;
-    for (let i = 0; i < rg.tools.length; i++) {
-      const tt = stepTsMs(rg.tools[i]);
-      if (tt > 0 && tt > ev.t_ms) {
-        insIdx = i;
-        break;
-      }
-    }
-    rg.tools.splice(insIdx, 0, virt);
-  }
-  return groups;
 }
 
 // 连续相同工具折叠（v0.16.5）：
@@ -1179,154 +1097,12 @@ function buildToolRenderEntries(tools: ThoughtStep[]): ToolRenderEntry[] {
   return out;
 }
 
-// ─── OTel 孤儿工具注入（v0.16.5）─────────────────────────
-// 主 transcript 主 agent 直接调用的 tool_use 通常只有十几个；OTel 通道却
-// 还能看到 subagent 内部嵌套的 100+ 次工具调用——这些 tool_use_id 在主
-// transcript 里看不见（被 Claude 折叠在 Agent (Task) 工具的 result 文本里）。
-//
-// 用户诉求："上百个 tooluse 干脆都集成到我的前端"——做法：把 OTel events
-// 里 tool_use_id ∉ 主 transcript 的 tool_decision/tool_result 配对，转成
-// 虚拟 ThoughtStep（step_type='tool_decision'/'tool_execution', metadata
-// 加 _otel_orphan: true 标记），按 t_ms 落到对应 turn.steps；之后走相同
-// buildRenderGroups → ToolBatchNode 自动折叠连续相同工具。
-function augmentCotWithOtelOrphans(
-  cot: SessionCoT,
-  otel: ClaudeOtelData,
-): SessionCoT {
-  const knownIds = new Set<string>();
-  for (const t of cot.turns) {
-    for (const s of t.steps) {
-      const id = ((s as any).tool_use_id || (s.metadata as any)?.tool_use_id) as string | undefined;
-      if (id) knownIds.add(id);
-    }
-  }
-  const orphanByUseId = new Map<string, { use_id: string; decision?: ClaudeOtelEvent; result?: ClaudeOtelEvent }>();
-  for (const e of (otel.events || [])) {
-    const en = e.event_name;
-    if (en !== 'tool_decision' && en !== 'tool_result') continue;
-    const uid = (e.attributes || {})['tool_use_id'] as string;
-    if (!uid || knownIds.has(uid)) continue;
-    let r = orphanByUseId.get(uid);
-    if (!r) { r = { use_id: uid }; orphanByUseId.set(uid, r); }
-    if (en === 'tool_decision') r.decision = e;
-    else r.result = e;
-  }
-  if (orphanByUseId.size === 0) return cot;
-  const eventTs = (e?: ClaudeOtelEvent): number => {
-    if (!e) return 0;
-    const t1 = (e.attributes || {})['event.timestamp'];
-    if (t1) {
-      const ms = Date.parse(t1);
-      if (!isNaN(ms)) return ms;
-    }
-    if (e.ts) {
-      const ms = Date.parse(e.ts);
-      if (!isNaN(ms)) return ms;
-    }
-    return 0;
-  };
-  // 给每个 turn 算时间窗（当 turn_start_ms_observed 缺失时回退到 step ts 范围）
-  const turnWindows = cot.turns.map(t => {
-    let t0 = (t as any).turn_start_ms_observed || 0;
-    let t1 = (t as any).turn_end_ms_observed || 0;
-    if (!t0 || !t1) {
-      const tsArr: number[] = [];
-      for (const s of t.steps) {
-        const ts = stepTsMs(s);
-        if (ts > 0) tsArr.push(ts);
-      }
-      if (tsArr.length > 0) {
-        t0 = t0 || Math.min(...tsArr);
-        t1 = t1 || Math.max(...tsArr);
-      }
-    }
-    return { t0, t1 };
-  });
-  const turnVirts: ThoughtStep[][] = cot.turns.map(() => []);
-  let virtIdx = 0;
-  for (const r of orphanByUseId.values()) {
-    const tDec = eventTs(r.decision);
-    const tRes = eventTs(r.result);
-    const tEv = tDec || tRes;
-    if (!tEv) continue;
-    let target = -1;
-    for (let i = 0; i < cot.turns.length; i++) {
-      const w = turnWindows[i];
-      if (!w.t0) continue;
-      if (w.t1 && tEv >= w.t0 && tEv <= w.t1) { target = i; break; }
-      // 落在两个 turn 之间的 gap，归到时间窗起点 ≤ tEv 的最右 turn
-      if (tEv >= w.t0) target = i;
-    }
-    if (target < 0) target = cot.turns.length - 1;
-    if (target < 0) continue;
-    const turn = cot.turns[target];
-    const decAttrs: any = (r.decision?.attributes || {});
-    const resAttrs: any = (r.result?.attributes || {});
-    const toolName = (decAttrs.tool_name || resAttrs.tool_name || 'tool') as string;
-    const toolInputRaw = decAttrs.tool_input || resAttrs.tool_input || '';
-    const toolInputStr = typeof toolInputRaw === 'string' ? toolInputRaw : JSON.stringify(toolInputRaw);
-    const success = resAttrs.success === 'true' || resAttrs.success === true;
-    const durMs = parseInt(resAttrs.duration_ms || '0', 10) || null;
-
-    if (r.decision) {
-      turnVirts[target].push({
-        step_index: 1_000_000 + virtIdx++,
-        turn_index: turn.turn_index,
-        step_type: 'tool_decision',
-        content: toolInputStr,
-        tool_name: toolName,
-        tool_use_id: r.use_id,
-        metadata: {
-          observed_at_ms: tDec || tEv,
-          tool_name: toolName,
-          tool_use_id: r.use_id,
-          tool_input: toolInputRaw,
-          decision: decAttrs.decision,
-          decision_source: decAttrs.decision_source,
-          _otel_orphan: true,
-        } as any,
-        timestamp: decAttrs['event.timestamp'] || r.decision.ts || '',
-        duration_ms: null,
-        tokens: 0,
-      } as any);
-    }
-    if (r.result) {
-      turnVirts[target].push({
-        step_index: 1_000_000 + virtIdx++,
-        turn_index: turn.turn_index,
-        step_type: 'tool_execution',
-        content: '',
-        tool_name: toolName,
-        tool_use_id: r.use_id,
-        metadata: {
-          observed_at_ms: tRes || tEv,
-          tool_name: toolName,
-          tool_use_id: r.use_id,
-          success,
-          duration_ms: durMs,
-          tool_result_size_bytes: parseInt(resAttrs.tool_result_size_bytes || '0', 10) || 0,
-          error_type: resAttrs.error_type,
-          error: resAttrs.error,
-          _otel_orphan: true,
-        } as any,
-        timestamp: resAttrs['event.timestamp'] || r.result.ts || '',
-        duration_ms: durMs,
-        tokens: 0,
-      } as any);
-    }
-  }
-  const newTurns = cot.turns.map((t, i) => {
-    if (turnVirts[i].length === 0) return t;
-    return { ...t, steps: [...t.steps, ...turnVirts[i]] };
-  });
-  return { ...cot, turns: newTurns };
-}
-
 // ─── Turn 块（线性时序 + 工具嵌在 thinking 之下） ─────────
 function TurnNode({
-  turn, cot, selectedNode, onSelect, abRole,
+  turn, cot, timeline, selectedNode, onSelect, abRole,
 }: {
-  turn: TurnCoT; cot: SessionCoT; selectedNode: SelectedNode | null;
+  turn: TurnCoT; cot: SessionCoT; timeline: TraceEvent[] | null;
+  selectedNode: SelectedNode | null;
   onSelect: (n: SelectedNode) => void;
   abRole?: AbTurnRole;
 }) {
@@ -1456,12 +1232,11 @@ function TurnNode({
     turn.turn_start_time, turn.turn_duration_ms,
   ]);
 
-  // v0.15.0：Claude 未启用 ext-thinking 时把 pre_tool_reasoning 视同
-  // thinking_explicit 折叠（与 DetailPanel 一致），给前端补上"思考阶段"。
-  // v0.17.1：CodeBuddy 永远启用——CodeBuddy transcript 里的 pre_tool_reasoning
-  // 是 Hunyuan/混元等模型在 tool_use 之前的自然语言决策（"我来帮你解析…"），
-  // 必须按紫色 🧠 思考气泡渲染、把内容首句作标题；之前默认 "💡 决策说明" 把
-  // 真实推理藏在折叠器里，用户只看见空标签。Cursor 路径保持原状。
+  // v0.15.0：Claude 未启用 ext-thinking 时把 pre_tool_reasoning 按思考气泡
+  // 渲染（与 DetailPanel 一致），给前端补上"思考阶段"的观感。
+  // v0.17.1：CodeBuddy 永远启用——它的 pre_tool_reasoning 装的是模型在
+  // tool_use 之前的自然语言推理，按 💡 决策说明渲染会把真实推理藏进折叠器。
+  // 这纯粹是展示口径，与事件顺序无关（顺序由后端定）。
   const treatPreToolAsThinking = useMemo(() => {
     const at = (cot?.agent_type || '');
     if (at === 'codebuddy') return true;
@@ -1474,34 +1249,13 @@ function TurnNode({
     return !hasExtThinking;
   }, [turn.steps, cot?.agent_type]);
 
-  // v0.16.5：把 4 类 hook events 转 ClaudeEventEntry 列表，待 interleave。
-  const claudeEvents = useMemo<ClaudeEventEntry[]>(() => {
-    const agentType = cot?.agent_type || '';
-    if (agentType !== 'claude' && agentType !== 'codex') return [];
-    const out: ClaudeEventEntry[] = [];
-    for (const e of (turnClaudeBadges.subagentList as any[])) {
-      if (typeof e?.t_ms === 'number') out.push({ kind: 'subagent', payload: e, t_ms: e.t_ms, agentType });
-    }
-    for (const e of (turnClaudeBadges.permissionList as any[])) {
-      if (typeof e?.t_ms === 'number') out.push({ kind: 'permission', payload: e, t_ms: e.t_ms, agentType });
-    }
-    for (const e of (turnClaudeBadges.notificationList as any[])) {
-      if (typeof e?.t_ms === 'number') out.push({ kind: 'notification', payload: e, t_ms: e.t_ms, agentType });
-    }
-    for (const e of (turnClaudeBadges.compactList as any[])) {
-      if (typeof e?.t_ms === 'number') out.push({ kind: 'compact', payload: e, t_ms: e.t_ms, agentType });
-    }
-    return out;
-  }, [
-    cot?.agent_type, turnClaudeBadges.subagentList, turnClaudeBadges.permissionList,
-    turnClaudeBadges.notificationList, turnClaudeBadges.compactList,
-  ]);
-
+  // 渲染顺序完全来自后端。timeline 未就绪时先不渲染步骤（而不是退回本地
+  // 排序）——两套排序实现正是这次改造要消灭的东西，宁可空一帧也不能让
+  // UI 显示一个与导出不一致的顺序。
   const groups = useMemo(() => {
-    const raw = buildRenderGroups(turn.steps);
-    const merged = mergeThinkingPhases(raw, { treatPreToolAsThinking });
-    return interleaveClaudeEventsIntoGroups(merged, claudeEvents);
-  }, [turn.steps, treatPreToolAsThinking, claudeEvents]);
+    if (!timeline) return [] as AnyGroup[];
+    return groupsFromTimeline(timeline, turn, cot?.agent_type || '');
+  }, [timeline, turn, cot?.agent_type]);
 
   // v0.11.2：本轮聚合 step.otel.token_usage（input/output/cost）
   // v1.0.4: Cursor / CodeBuddy 在 1.0.3 起 step.usage 全是 0/0（协议没暴露 per-step 真值），
@@ -1523,6 +1277,12 @@ function TurnNode({
       const tu: any = (s as any).otel?.token_usage;
       if (!tu) continue;
       if ((s as any).otel?.step_kind === 'llm_call') llm++;
+      // non_llm_step（tool_execution / user_input）的 token 是工具入参和结果
+      // 的字符估算，模型从没产出过它们，cost_usd 也是 null。把它们加进来会让
+      // 这枚徽章自相矛盾：一条 cursor turn 实测 181 个 LLM step 是 4.4K/26.0K，
+      // 混进 94 个工具步骤后变成 9.1K/33.7K，而旁边的 cost 仍只按 LLM 算，
+      // 同时 eval 面板报的又是 LLM-only 的数——同一轮交互三个答案。
+      if (tu.cost_reason === 'non_llm_step') continue;
       stepInTok += tu.input_tokens || 0;
       stepOutTok += tu.output_tokens || 0;
       if (typeof tu.cost_usd === 'number') {
@@ -1530,19 +1290,30 @@ function TurnNode({
         hasCost = true;
       }
     }
-    // 真值优先：turn.usage 任一非零就用 turn 真值，否则 fallback 到 step 累加
-    const useTurnTruth = (turnIn > 0 || turnOut > 0);
-    const inTok = useTurnTruth ? turnIn : stepInTok;
-    const outTok = useTurnTruth ? turnOut : stepOutTok;
-    return {
-      inTok,
-      outTok,
-      costSum,
-      hasCost,
-      llm,
-      // truthSource 给 tooltip 区分"真值"和"step 累加"两种来源
-      truthSource: useTurnTruth ? (turnSource || 'turn_truth') : 'step_aggregate',
-    };
+    // 三层兜底，跟 DetailPanel.readTurnUsage 和后端 _extract_turn_usage 完全同链：
+    //   1) turn.usage（hook per-turn 真值）
+    //   2) LLM step 累加
+    //   3) turn.otel.token_usage（enricher turn 级）
+    // 第 3 层是后补的：部分 cursor 会话每个 step 的用量都是 0（协议没暴露
+    // per-step 真值），前两层加出来是 0，chip 就会显示 ↧0/↥0，而右侧详情面板
+    // 走到第 3 层显示 256/792 —— 同一轮两个数字，且 0 那个明显是假的。
+    const enricher: any = (turn as any)?.otel?.token_usage || {};
+    const enIn = Number(enricher.input_tokens) || 0;
+    const enOut = Number(enricher.output_tokens) || 0;
+
+    let inTok: number, outTok: number, truthSource: string;
+    if (turnIn > 0 || turnOut > 0) {
+      inTok = turnIn; outTok = turnOut; truthSource = turnSource || 'turn_truth';
+    } else if (stepInTok > 0 || stepOutTok > 0) {
+      inTok = stepInTok; outTok = stepOutTok; truthSource = 'step_aggregate';
+    } else {
+      inTok = enIn; outTok = enOut; truthSource = 'otel_enricher';
+      if (!hasCost && typeof enricher.cost_usd === 'number' && enricher.cost_usd > 0) {
+        costSum = enricher.cost_usd;
+        hasCost = true;
+      }
+    }
+    return { inTok, outTok, costSum, hasCost, llm, truthSource };
   }, [turn.steps, turn]);
 
   // v0.17.2 (codebuddy only)：每 turn 真实使用的 model 徽章。优先级：
@@ -1633,9 +1404,11 @@ function TurnNode({
               title={
                 `本轮 LLM step ×${turnOtel.llm}\n` +
                 `输入 ${fmtOtelTokens(turnOtel.inTok)} · 输出 ${fmtOtelTokens(turnOtel.outTok)}\n` +
-                (turnOtel.truthSource && turnOtel.truthSource !== 'step_aggregate'
-                  ? `来源：turn 真值（${turnOtel.truthSource}）`
-                  : `来源：step.otel.token_usage 累加`) +
+                (turnOtel.truthSource === 'step_aggregate'
+                  ? `来源：step.otel.token_usage 累加（仅 LLM 调用，不含工具步骤）`
+                  : turnOtel.truthSource === 'otel_enricher'
+                    ? `来源：turn.otel.token_usage（enricher 估算；step 级无真值）`
+                    : `来源：turn 真值（${turnOtel.truthSource}）`) +
                 (turnOtel.hasCost
                   ? `\n估算 cost ${fmtOtelCost(turnOtel.costSum)}（按字符 token，非 cache-aware）`
                   : '')
@@ -2281,6 +2054,10 @@ function SubSessionDivider({
         <span className="tree-subsession-index">#{turn.turn_index}</span>
         <span className="tree-subsession-topic">💬 {topic}</span>
         <AbTurnStamp role={abRole ?? null} />
+        <TurnTraceExportButton
+          sessionId={cot.session_id}
+          turnIndex={turn.turn_index}
+        />
         <button
           type="button"
           className={`tree-subsession-eval tree-subsession-eval-${evalState} ${evalReport && evalState === 'done' ? 'tree-subsession-eval-done' : ''}`}
@@ -2336,6 +2113,48 @@ function SubSessionDivider({
   );
 }
 
+// ─── 单轮导出按钮 ─────────────────────────────────────────
+// 挂在每张交互卡片上，导的就是这一轮的事件。导出顺序与树上看到的一致——
+// 两者读的是同一份后端 /timeline 结果。
+function TurnTraceExportButton({
+  sessionId, turnIndex,
+}: {
+  sessionId: string; turnIndex: number;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState('');
+
+  const download = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBusy(true);
+    setFailed('');
+    try {
+      await saveDownloadedFile(await api.downloadTurnTrace(sessionId, turnIndex));
+    } catch (err: any) {
+      // 失败必须看得见。一个点了毫无反应的按钮比报错更难排查。
+      const msg = err?.message || String(err);
+      setFailed(msg);
+      if (msg !== '已取消保存') window.alert(`导出第 ${turnIndex} 轮 trace 失败：${msg}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className={`tree-subsession-export${failed ? ' tree-subsession-export-failed' : ''}`}
+      disabled={busy}
+      title={failed
+        ? `导出失败：${failed}`
+        : `导出第 ${turnIndex} 轮的完整 trace（jsonl：thinking / 工具调用 / plan / 权限，一行一个事件）`}
+      onClick={download}
+    >
+      {busy ? '⏳' : '⬇'} {failed ? '导出失败' : '导出'}
+    </button>
+  );
+}
+
 // ─── 主组件 ───────────────────────────────────────────────
 export default function SpanTree({
   cot: rawCot,
@@ -2368,15 +2187,44 @@ export default function SpanTree({
     api.getClaudeOtel(rawCot.session_id).then(d => {
       if (!cancelled) setOtelData(d);
     }).catch(() => {
-      // OTel 数据缺失时静默回退到原 cot（不影响主链路）
+      // OTel 数据缺失时静默跳过（只影响 ClaudeToolStatsCompact，不影响主链路）
     });
     return () => { cancelled = true; };
   }, [rawCot?.agent_type, rawCot?.session_id]);
 
-  const cot = useMemo(() => {
-    if (!otelData) return rawCot;
-    return augmentCotWithOtelOrphans(rawCot, otelData);
-  }, [rawCot, otelData]);
+  const cot = rawCot;
+
+  // 有序事件流：唯一的顺序真值。后端已经把主步流和 5 条并行时间线按真实
+  // 时刻合并好，也把 Claude subagent 内部那些主 transcript 看不见的工具
+  // 调用（原生 OTel 通道独有）合了进来。
+  const [timeline, setTimeline] = useState<TraceEvent[] | null>(null);
+  const [timelineError, setTimelineError] = useState<string>('');
+  useEffect(() => {
+    if (!cot?.session_id) {
+      setTimeline(null);
+      return;
+    }
+    let cancelled = false;
+    setTimeline(null);
+    setTimelineError('');
+    api.getSessionTimeline(cot.session_id).then(d => {
+      if (!cancelled) setTimeline(d.events || []);
+    }).catch(e => {
+      if (!cancelled) setTimelineError(e?.message || String(e));
+    });
+    return () => { cancelled = true; };
+  }, [cot?.session_id]);
+
+  const timelineByTurn = useMemo(() => {
+    const map = new Map<number, TraceEvent[]>();
+    for (const ev of (timeline || [])) {
+      if (typeof ev.turn !== 'number') continue;
+      const bucket = map.get(ev.turn);
+      if (bucket) bucket.push(ev);
+      else map.set(ev.turn, [ev]);
+    }
+    return map;
+  }, [timeline]);
 
   // v0.14.6：徽章点击/外部跳转后把 SpanTree 滚到对应节点。
   // 思路：StepNode/TurnNode 上挂 data-step-index / data-turn-index，
@@ -2631,6 +2479,14 @@ export default function SpanTree({
         <ClaudeToolStatsCompact sessionId={cot.session_id} prefetched={otelData} />
       )}
 
+      {/* 时间线是步骤树的顺序来源，取不到就整棵树都画不出来，
+          所以这个错误必须显式告诉用户，而不是留一片空白让人以为没数据。 */}
+      {timelineError && (
+        <div className="tree-timeline-error">
+          ⚠️ 时间线加载失败，步骤树与导出均不可用：{timelineError}
+        </div>
+      )}
+
       {/* 子会话流：每个 turn = 一次 user→AI 交互。每个 turn 前面都放一条醒目分隔带。 */}
       <div className="tree-turns-list">
         {cot.turns.map((turn, idx) => {
@@ -2651,6 +2507,7 @@ export default function SpanTree({
               <TurnNode
                 turn={turn}
                 cot={cot}
+                timeline={timelineByTurn.get(turn.turn_index) ?? (timeline ? [] : null)}
                 selectedNode={selectedNode}
                 onSelect={onSelectNode}
                 abRole={abRole}

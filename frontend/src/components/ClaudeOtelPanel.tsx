@@ -19,7 +19,7 @@
  *   4. Traces 树：claude_code.interaction 根 → llm_request / tool 子节点
  */
 import { useEffect, useState } from 'react';
-import { api } from '../hooks/api';
+import { api, saveDownloadedFile } from '../hooks/api';
 import type {
   ClaudeOtelData,
   ClaudeOtelEvent,
@@ -54,6 +54,9 @@ function fmtTs(ts?: string | null): string {
   const m = ts.match(/T(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/);
   return m ? m[1] : ts;
 }
+
+const saveJsonBlob = (blob: Blob, filename: string) =>
+  saveDownloadedFile({ blob, filename });
 
 // v0.16.2: 汇总 hook_execution_* 事件 —— 这是 Claude Code 27 个 hooks 的真实
 // 触发记录（通过 OTel 通道，权威性高于自部署的 hook 脚本）。每对 start/complete
@@ -364,14 +367,9 @@ export function ClaudeOtelPanel({ sessionId, hideInternalToolbar = false }: Prop
   // 可以离线塞 Phoenix / SigNoz / 自定义脚本。
   const handleDownload = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `claude-otel-${sessionId.slice(0, 8)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    saveJsonBlob(blob, `claude-otel-${sessionId.slice(0, 8)}.json`).catch(e => {
+      setErr(e?.message || String(e));
+    });
   };
 
   return (

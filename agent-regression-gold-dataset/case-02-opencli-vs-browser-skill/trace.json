@@ -1,0 +1,37 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "426f9d3b-9913-44b8-8bb0-e04c2b1c6740",
+    "source_turn_index": 3,
+    "agent_type": "cursor",
+    "complexity": "simple",
+    "minimized": true
+  },
+  "session_id": "dataset-case-02-opencli-vs-browser-skill",
+  "agent_type": "cursor",
+  "turns": [
+    {
+      "turn_index": 3,
+      "user_query": "<timestamp>Friday, Jul 17, 2026, 10:54 AM (UTC+8)</timestamp>\n<user_query>\n你再给我讲一下opencli和我现在内置的这个操作浏览器的skill，区别是什么，如果想要后续做一个更大的网站，应该用哪个，MVP也该用哪个\n</user_query>",
+      "final_response": "两者不是同一层级：\n\n### OpenCLI 是“标准化采集工具”\n\n它把网站操作封装成固定命令，例如：\n\n```bash\nopencli xiaohongshu search \"上海美食\"\nopencli xiaohongshu note \"<签名URL>\"\nopencli xiaohongshu comments \"<签名URL>\" --with-replies\n```\n\n特点：\n\n- 输出结构化 JSON，便于程序直接处理、入库和重跑\n- 搜索、正文、评论字段相对稳定\n- 适合批处理和自动化脚本\n- 依赖已登录浏览器、Browser Bridge 和有效 `xsec_token`\n- 小红书页面一旦改版，需要 OpenCLI 适配器更新\n- 官方文档目前要求 Chrome；你当前 skill 使用的是 Edge，需要额外准备 Chrome 登录态\n\n它更像“网站适配器/命令行数据接口”。\n\n### web-access skill 是“让 AI 临时操作浏览器”\n\n你现在的 skill 通过 CDP 操作 Edge，由 AI 动态查看 DOM、点击、滚动、提取内容。\n\n特点：\n\n- 不要求提前写好固定适配器\n- 网站改版时，AI可以现场判断页面结构\n- 适合探索未知页面、处理弹窗和补救失败流程\n- 每次执行依赖模型判断，速度慢、成本高、结果一致性较差\n- 不适合大量、定时、可重复的数据采集\n- 很难直接作为网站后端的稳定接口\n\n它更像“AI 浏览器操作员”。\n\n### MVP 应该怎么选\n\n推荐：\n\n> OpenCLI 主路径 + web-access skill 兜底。\n\n具体流程：\n\n1. OpenCLI 搜索笔记。\n2. OpenCLI读取正文和评论。\n3. 将结构化 JSON 交给模型甄别。\n4. OpenCLI失效、缺字段或遇到特殊页面时，再让 skill 操作 Edge。\n5. 两种方式都失败，就跳过该笔记，不阻塞整份行程。\n\nMVP 不建议完全依赖 skill，因为几十、几百篇笔记会导致执行慢、输出不稳定，也难以调试。\n\n### 更大的网站应该用哪个\n\n如果只是个人开源项目发展到几百或几千用户，可以继续：\n\n- OpenCLI负责离线冷启动和定期更新\n- 预先生成城市 POI 数据\n- 用户请求只查询你自己的数据库\n- web-access仅供管理员人工补数据\n\n但如果真的变成较大的公共网站，答案是：\n\n> 两者都不应成为线上请求的核心数据源。\n\n原因是它们都依赖真实浏览器登录态，存在：\n\n- 账号风控和封禁\n- `xsec_token`过期\n- 登录状态失效\n- 页面改版\n- 同一账号并发能力低\n- 无法提供稳定 SLA\n- 平台条款和内容使用风险\n\n更大规模时应逐步迁移为：\n\n1. 获授权或官方数据源。\n2. 后台离线采集，不在用户请求时实时打开小红书。\n3. 自建结构化 POI 和评论信号数据库。\n4. 设置来源时间、TTL和定期更新。\n5. 必要时让用户在自己的浏览器中运行本地插件，再把结构化结果提交给网站。\n6. OpenCLI只作为内部数据维护工具，skill作为人工运维工具。\n\n最终建议：\n\n- **现在 MVP：OpenCLI 80%，skill 20%**\n- **个人公开站：OpenCLI做离线采集，网站只读自己的数据库**\n- **真正规模化：授权数据/用户本地采集为主，OpenCLI和skill均降为辅助工具**\n\n最关键的一点是：不要设计成“每个用户点击生成后，服务器立即操作小红书浏览器”。这在性能、稳定性和风控上都无法扩展。",
+      "steps": [
+        {
+          "step_index": 168,
+          "turn_index": 3,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "<timestamp>Friday, Jul 17, 2026, 10:54 AM (UTC+8)</timestamp>\n<user_query>\n你再给我讲一下opencli和我现在内置的这个操作浏览器的skill，区别是什么，如果想要后续做一个更大的网站，应该用哪个，MVP也该用哪个\n</user_query>"
+        },
+        {
+          "step_index": 169,
+          "turn_index": 3,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "两者不是同一层级：\n\n### OpenCLI 是“标准化采集工具”\n\n它把网站操作封装成固定命令，例如：\n\n```bash\nopencli xiaohongshu search \"上海美食\"\nopencli xiaohongshu note \"<签名URL>\"\nopencli xiaohongshu comments \"<签名URL>\" --with-replies\n```\n\n特点：\n\n- 输出结构化 JSON，便于程序直接处理、入库和重跑\n- 搜索、正文、评论字段相对稳定\n- 适合批处理和自动化脚本\n- 依赖已登录浏览器、Browser Bridge 和有效 `xsec_token`\n- 小红书页面一旦改版，需要 OpenCLI 适配器更新\n- 官方文档目前要求 Chrome；你当前 skill 使用的是 Edge，需要额外准备 Chrome 登录态\n\n它更像“网站适配器/命令行数据接口”。\n\n### web-access skill 是“让 AI 临时操作浏览器”\n\n你现在的 skill 通过 CDP 操作 Edge，由 AI 动态查看 DOM、点击、滚动、提取内容。\n\n特点：\n\n"
+        }
+      ],
+      "total_steps": 2
+    }
+  ]
+}

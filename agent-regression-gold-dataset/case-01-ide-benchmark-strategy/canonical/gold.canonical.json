@@ -1,0 +1,119 @@
+{
+  "dataset": {
+    "name": "reference-dataset",
+    "version": "v1",
+    "description": "",
+    "metadata": {},
+    "cases": [
+      {
+        "id": "case-1",
+        "title": "Reference Answer",
+        "question": "",
+        "expected_answer": "Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。",
+        "original_expected_answer": "Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。",
+        "rubric": "描述如何处理测试集和任务卡的要求",
+        "keywords": [
+          "Provider",
+          "测试集",
+          "GUI IDE",
+          "HTTP API",
+          "workspace diff",
+          "任务卡",
+          "trace",
+          "通过率",
+          "稳定性",
+          "耗时"
+        ],
+        "assertions": [],
+        "process_requirements": {
+          "must_include": [
+            "初始 workspace",
+            "prompt",
+            "verifier"
+          ]
+        },
+        "metadata": {},
+        "normalization": {
+          "mode": "schema_only",
+          "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+          "semantic_enrichment": "configured_judge"
+        }
+      }
+    ],
+    "_parse_warnings": [],
+    "content_hash": "47a1fca40787",
+    "dataset_id": "reference-dataset-v1-47a1fca4",
+    "source_filename": "gold.raw.txt",
+    "uploaded_at": "2026-07-17T11:53:38+00:00"
+  },
+  "case": {
+    "id": "case-1",
+    "title": "Reference Answer",
+    "question": "",
+    "expected_answer": "Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。",
+    "original_expected_answer": "Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。",
+    "rubric": "描述如何处理测试集和任务卡的要求",
+    "keywords": [
+      "Provider",
+      "测试集",
+      "GUI IDE",
+      "HTTP API",
+      "workspace diff",
+      "任务卡",
+      "trace",
+      "通过率",
+      "稳定性",
+      "耗时"
+    ],
+    "assertions": [],
+    "process_requirements": {
+      "must_include": [
+        "初始 workspace",
+        "prompt",
+        "verifier"
+      ]
+    },
+    "metadata": {},
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  },
+  "reference_answer": {
+    "case_id": "case-1",
+    "title": "Reference Answer",
+    "question": "",
+    "standard_answer": "Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。",
+    "expected_answer": "Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。",
+    "original_expected_answer": "Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。",
+    "rubric": "描述如何处理测试集和任务卡的要求",
+    "keywords": [
+      "Provider",
+      "测试集",
+      "GUI IDE",
+      "HTTP API",
+      "workspace diff",
+      "任务卡",
+      "trace",
+      "通过率",
+      "稳定性",
+      "耗时"
+    ],
+    "assertions": [],
+    "process_requirements": {
+      "must_include": [
+        "初始 workspace",
+        "prompt",
+        "verifier"
+      ]
+    },
+    "dataset_name": "reference-dataset",
+    "dataset_version": "v1",
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  }
+}

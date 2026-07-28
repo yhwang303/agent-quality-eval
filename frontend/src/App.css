@@ -2338,6 +2338,41 @@ body {
   color: var(--text-1);
   font-size: 10px;
 }
+/* 单轮 trace 导出。跟同一排的 Eval / Gold 用一套形状，只是配色偏中性——
+   它是随手就用的动作，不该比"评估"更抢眼。 */
+.tree-subsession-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.36);
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+.tree-subsession-export:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.45);
+  background: rgba(8, 145, 178, 0.14);
+  color: #bae6fd;
+}
+.tree-subsession-export:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.tree-subsession-export-failed {
+  border-color: rgba(239, 68, 68, 0.42);
+  background: rgba(239, 68, 68, 0.10);
+  color: #fca5a5;
+}
+
 .tree-subsession-reference {
   display: inline-flex;
   align-items: center;
@@ -3187,6 +3222,39 @@ body {
   font-size: 17px;
   line-height: 1.2;
   font-weight: 800;
+}
+/* 紧跟在"面板"二字之后的导出按钮。标题是 800 字重的大字，按钮压小并
+   垂直居中对齐，免得把标题的行高撑开。 */
+.dp-eval-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 9px;
+  vertical-align: middle;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.4);
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+.dp-eval-export:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.45);
+  background: rgba(8, 145, 178, 0.14);
+  color: #bae6fd;
+}
+.dp-eval-export:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.dp-eval-export-failed {
+  border-color: rgba(239, 68, 68, 0.42);
+  background: rgba(239, 68, 68, 0.10);
+  color: #fca5a5;
 }
 .dp-eval-verdict-chip {
   flex: 0 0 auto;
@@ -6346,6 +6414,19 @@ body {
 /* v0.11.2 — OTel KPI inline integration（主前端反向集成段）       */
 /* SpanTree session/turn 节点 + DetailPanel 顶部 KPI 条           */
 /* ============================================================ */
+
+/* Trace 导出条：树顶一行，三种格式各一个按钮 */
+/* 时间线取不到时的提示。它是步骤树的顺序来源，失败必须说出来。 */
+.tree-timeline-error {
+  display: block;
+  margin: 8px 0 4px;
+  padding: 6px 10px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: #fca5a5;
+}
 
 /* SpanTree 上的 inline 微徽章（model + cost + cache hit） */
 .tree-otel-chip {

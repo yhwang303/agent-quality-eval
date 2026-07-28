@@ -1,0 +1,44 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "codebuddy-46d404cd26524755885527dc186d0530",
+    "source_turn_index": 3,
+    "agent_type": "codebuddy",
+    "complexity": "simple",
+    "minimized": true
+  },
+  "session_id": "dataset-case-04-ab-evaluation-method",
+  "agent_type": "codebuddy",
+  "turns": [
+    {
+      "turn_index": 3,
+      "user_query": "我总结一下anthropic这个，实际上就是有/没有skill的一个abtest，然后两个情况同步跑，做上下文隔离，主要的eval就是靠三个subagent：eval+盲审+综合分析，然后根据analysis的结果不断迭代skill，全过程都是ai自己迭代吗，有人类的参与吗？\n还有一个就是我当前这个项目，是有base和候选之分，但实际上两者并没有权重上的区别，意思就是我可以任意选择trace当base，不存在llm带系统偏见，无非就是此时是基于llm的eval。对于单条trace的eval，现在用的是基于hook的subagent，同样的思路。\n我现在有两个疑问：1. 对于评价指标，我看anthropic这边没有用太多，基本都是一些基础的数据，然后我这边的项目是用了一些更精细的指标，这些指标是够用的是吗？2. 如果我想复现这个md文档的方法，我该怎么做？就是我把当前我的这个观测+eval的内容当作一个前端展示，但是实际在abtest中的时候还是用A\\的这个方案，现在的调llm当作兜底，这样可以吗？",
+      "final_response": "## 疑问1：anthropic 流程有人类参与吗？\n\n**不是纯 AI 自迭代，人类是每轮的关键评审者。**\n\n从 SKILL.md 原文可以看到分工：\n\n| 阶段 | 谁做 |\n|---|---|\n| 写 skill 草稿 / 起草 assertions | AI |\n| 跑 with/without skill、grader 打分、aggregate、analyzer | AI |\n| 在 viewer 里审阅输出、留 feedback | **人类** |\n| 读 feedback 后改进 skill | AI |\n| 决定何时停止迭代 | **人类** |\n\n原文关键句：\n- *\"When you're done, come back here and let me know.\"* —— 每轮要等人类看完反馈\n- *\"Empty feedback means the user thought it was fine. Focus your improvements on the test cases where the user had specific complaints.\"* —— 改进依据是人类的抱怨\n- 停止条件之一是 *\"The user says they're happy\"*\n\n所以是 **AI 主导执行 + 人类在每轮做节点评审** 的半自动闭环，不是\"AI 自己跑到底\"。subagent 三件套（Grader/Comparator/Analyzer）是 AI 内部协作，但闭环的外层一定有 human-in-the-loop。\n\n---\n\n## 疑问2：你的项目\"base 和候选无权重区别\"是否真的无偏见？\n\n你这个观察**对一半**，需要区分三种偏见：\n\n| 偏见类型 | 你场景下是否存在 |\n|---|---|\n| **身份偏见**（哪一方是新版） | **不存在** ✅——双方对称，base/candidate 是你任意指定的，不像 skill-creator 里 baseline 永远是\"无 skill\"、candidate 永远是\"有 skill\"那种带方向性预期 |\n| **位置偏见**（LLM 偏好先输入的） | **仍存在** ⚠️——这是 LLM-as-judge 的已知现象，跟 label 无关 |\n| **单次随机性** | **仍存在** ⚠️——单次调用受 temperature 影响 |\n\n所以你说的\"不存在系统偏见\"对的是身份偏见这一类。盲化在你这里**收益确实比 skill-creator 小**——它主要解决身份偏见，那个你已经天然没有了。盲化对你剩下的价值是消除位置偏见（包装成 A/B 随机化输入顺序），如果你认为位置偏见影响小，**完全可以不全盘照搬盲化**，只在边界 case 才启用。\n\n更值得你关注的是**单次随机性**——这才是 LLM eval 真正不稳定的地方，多次运行比盲化对你更重要。\n\n---\n\n## 疑问3：评价指标够用吗？\n\n**够用，甚至偏多。** 但问题不在数量，在分层。\n\nskill-creator 指标确实基础（pass_rate / time / tokens / tool_calls 四个），原因是它的目标很窄：**用最小可观测集快速判断\"skill 有没有用\"**。它把语义判断的活儿全甩给了 Grader（LLM），不让指标堆叠承担判断责任。\n\n你这边 `ab_testing.secondary_metrics` 列了 11 个（assertion_pass_rate / matched_assertion_delta / total_tokens / tool_count / tool_kind_count / mcp_tool_count / rag_tool_count / retrieval_tool_count / shell_tool_count / tool_error_count ...）+ 7 个 verdict 维度。数量上够用甚至过剩，真正的问题是：\n\n1. **没有区分 primary 和 secondary**：决策应该用少数稳定的（pass_rate / quality_delta / 5 个核心 verdict），其他归为诊断用——出现异常时才看。skill-creator 的 Analyzer 之所以有效，正是因为它聚焦在\"找异常\"而不是\"全维度都过一遍\"。\n2. **缺反批机制**：你的 assertions 是用户配的固定项，不会自我审视\"这个断言是不是太容易满足\"。skill-creator 的 Grader 会输出 `eval_feedback.suggestions`，主动标记\"这条断言即使输出错误也会通过\"——这个机制你值得补，让 critic 顺带反批 eval 本身。\n3. **细分指标在样本少时方差大**：mcp_tool_count / rag_tool_count 这类，3 次运行里可能 0/0/2，比 pass_rate 还 noisy。建议这种指标只做异常检测不做决策。\n\n结论：**指标数量不是问题，缺的是分层 + 反批**。建议补两件事——明确哪些是决策指标、哪些是诊断指标；让 critic 顺带输出 eval_feedback。\n\n---\n\n## 疑问4：前端展示用现有观测+eval，abtest 内部用 A/B 盲化，现有调 LLM 当兜底——这样可以吗？\n\n**架构方向对，但\"兜底\"这个词用反了，建议倒过来理解。**\n\nskill-creator 的分层是 **deterministic rubric 是 primary，LLM Comparator 是 secondary**——原文 `comparator.md` 明确 *\"Output quality first. Assertion scores are secondary to overall task completion.\"*。在你的场景应该是：\n\n```\nabtest 决策流：\n  deterministic diff（declines/improvements/quality_delta/pass_rate_delta）\n       │\n       ├─ 明显差异（如 quality_delta > 0.2 或 declines 含 critical）→ 直接判 verdict\n       │\n       └─ 边界 case（delta 在阈值附近、双方各有胜负）→ 才走盲化 LLM 比较\n                                                       │\n                                                       └─ 综合给最终 verdict\n```\n\n注意几个点：\n\n1. **\"现有调 LLM 当兜底\"要改成\"现有调 LLM 升级为盲化 + 降为 secondary\"**——不是 LLM 不可用时退到 deterministic，而是 deterministic 解决不了时才请 LLM。这样 LLM 调用少、稳定，且只用在真正需要语义判断的 case。\n\n2. **前端展示完全不动**：trace、7 维度 verdict、metrics 都保留作为人类审阅源。abtest 内部的盲化是决策路径，跟展示解耦。这跟 skill-creator 的设计一致——它也是把 viewer 展示和 Comparator 决策分两条线。\n\n3. **盲化对你的价值确实有限**（见疑问2），如果决定不上盲化，至少要做**双向交叉评**（同一对 trace 跑两次，交换输入顺序，两次都判同一方赢才采信）。这个比盲化对你更划算——直接暴露位置偏见，成本只是多一次 LLM 调用。\n\n4. **regression 不要套这个分层**：你的 deterministic gate（pass_rate drop / p95 / 高优 / 安全）已经比 skill-creator 的纯 delta 更适合 CI 门禁，**保留原样**。regression 唯一值得补的是多次运行 mean±stddev，让单次偶发不触发 gate。\n\n**最小可行复现顺序**：\n- 第 1 步（必做）：deterministic diff 作为 abtest primary 决策，LLM 降为 secondary\n- 第 2 步（推荐）：双向交叉评代替单次 LLM 调用，识别位置偏见\n- 第 3 步（可选）：盲化包装，如果第 2 步发现位置偏见明显才上\n- 第 4 步（可选）：Analyzer 诊断 pass，跨多对 abtest 自动标记非区分性维度\n- 第 5 步（regression 独立）：补多次运行统计\n\n第 1 步几乎零成本，是改造的真正起点。盲化可以放到最后看必要性。",
+      "steps": [
+        {
+          "step_index": 113,
+          "turn_index": 3,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "我总结一下anthropic这个，实际上就是有/没有skill的一个abtest，然后两个情况同步跑，做上下文隔离，主要的eval就是靠三个subagent：eval+盲审+综合分析，然后根据analysis的结果不断迭代skill，全过程都是ai自己迭代吗，有人类的参与吗？\n还有一个就是我当前这个项目，是有base和候选之分，但实际上两者并没有权重上的区别，意思就是我可以任意选择trace当base，不存在llm带系统偏见，无非就是此时是基于llm的eval。对于单条trace的eval，现在用的是基于hook的subagent，同样的思路。\n我现在有两个疑问：1. 对于评价指标，我看anthropic这边没有用太多，基本都是一些基础的数据，然后我这边的项目是用了一些更精细的指标，这些指标是够用的是吗？2. 如果我想复现这个md文档的方法，我该怎么做？就是我把当前我的这个观测+eval的内容当作一个前端展示，但是实际在abtest中的时候还是用A\\的这个方案，现在的调llm当作兜底，这样可以吗？"
+        },
+        {
+          "step_index": 114,
+          "turn_index": 3,
+          "step_type": "thinking_explicit",
+          "tool_name": "",
+          "content_excerpt": "用户有三个疑问，我需要仔细理解并回答：\n\n1. 关于 anthropic skill-creator 的全流程：是否 AI 自己迭代，有没有人类参与？\n2. 用户项目里 base 和候选无权重区别，所以 LLM 不带系统偏见，那 abtest 改造是否还需要盲化？\n3. 评价指标是否够用？anthropic 这边指标很基础，用户这边有更精细的指标\n4. 复现方案：用当前观测+eval 作为前端展示，但 abtest 时用 A/B 盲化方案，现在调 LLM 当兜底，这样可以吗？\n\n让我重新审视一下：\n\n**疑问1：anthropic 是不是 AI 自己迭代，有人类参与吗？**\n\n回顾 SKILL.md 内容：\n- \"Help the user evaluate the results both qualitatively and quantitatively\"\n- \"Use the `eval-viewer/generate_review.py` script to show the user the results for them to look at, and also let t"
+        },
+        {
+          "step_index": 115,
+          "turn_index": 3,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "## 疑问1：anthropic 流程有人类参与吗？\n\n**不是纯 AI 自迭代，人类是每轮的关键评审者。**\n\n从 SKILL.md 原文可以看到分工：\n\n| 阶段 | 谁做 |\n|---|---|\n| 写 skill 草稿 / 起草 assertions | AI |\n| 跑 with/without skill、grader 打分、aggregate、analyzer | AI |\n| 在 viewer 里审阅输出、留 feedback | **人类** |\n| 读 feedback 后改进 skill | AI |\n| 决定何时停止迭代 | **人类** |\n\n原文关键句：\n- *\"When you're done, come back here and let me know.\"* —— 每轮要等人类看完反馈\n- *\"Empty feedback means the user thought it was fine. Focus your improvements on the test cases where the user had specific complaints"
+        }
+      ],
+      "total_steps": 3
+    }
+  ]
+}

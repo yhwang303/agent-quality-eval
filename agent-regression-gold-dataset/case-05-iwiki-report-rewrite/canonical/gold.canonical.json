@@ -1,0 +1,128 @@
+{
+  "dataset": {
+    "name": "reference-dataset",
+    "version": "v1",
+    "description": "",
+    "metadata": {},
+    "cases": [
+      {
+        "id": "case-1",
+        "title": "Reference Answer",
+        "question": "读取一份内部 agent eval 技术报告，重写为只保留核心架构、实现路径和典型工程问题的新报告并保存。",
+        "expected_answer": "应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。",
+        "original_expected_answer": "用户的问题大概是：读取一份内部 agent eval 技术报告，重写为只保留核心架构、实现路径和典型工程问题的新报告并保存。\n\n我认为比较合理的回答是：\n应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。\n\n我主要会看这一点：必须读取源文档、核对代码结构、按架构/路径/工程问题重写，并通过 iWiki 保存。",
+        "rubric": "必须读取源文档、核对代码结构、按架构/路径/工程问题重写，并通过 iWiki 保存。",
+        "keywords": [
+          "内部 agent eval 技术报告",
+          "核心架构",
+          "实现路径",
+          "工程问题",
+          "源文档",
+          "项目结构",
+          "目标文档",
+          "IDE adapter",
+          "hook runtime",
+          "JSON 解析"
+        ],
+        "assertions": [],
+        "process_requirements": {
+          "must_include": [
+            "源文档",
+            "项目结构",
+            "目标文档"
+          ],
+          "must_not_include": [
+            "逐版本 changelog"
+          ]
+        },
+        "metadata": {},
+        "normalization": {
+          "mode": "schema_only",
+          "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+          "semantic_enrichment": "configured_judge"
+        }
+      }
+    ],
+    "_parse_warnings": [],
+    "content_hash": "0a07af735bdf",
+    "dataset_id": "reference-dataset-v1-0a07af73",
+    "source_filename": "gold.raw.txt",
+    "uploaded_at": "2026-07-17T11:54:02+00:00"
+  },
+  "case": {
+    "id": "case-1",
+    "title": "Reference Answer",
+    "question": "读取一份内部 agent eval 技术报告，重写为只保留核心架构、实现路径和典型工程问题的新报告并保存。",
+    "expected_answer": "应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。",
+    "original_expected_answer": "用户的问题大概是：读取一份内部 agent eval 技术报告，重写为只保留核心架构、实现路径和典型工程问题的新报告并保存。\n\n我认为比较合理的回答是：\n应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。\n\n我主要会看这一点：必须读取源文档、核对代码结构、按架构/路径/工程问题重写，并通过 iWiki 保存。",
+    "rubric": "必须读取源文档、核对代码结构、按架构/路径/工程问题重写，并通过 iWiki 保存。",
+    "keywords": [
+      "内部 agent eval 技术报告",
+      "核心架构",
+      "实现路径",
+      "工程问题",
+      "源文档",
+      "项目结构",
+      "目标文档",
+      "IDE adapter",
+      "hook runtime",
+      "JSON 解析"
+    ],
+    "assertions": [],
+    "process_requirements": {
+      "must_include": [
+        "源文档",
+        "项目结构",
+        "目标文档"
+      ],
+      "must_not_include": [
+        "逐版本 changelog"
+      ]
+    },
+    "metadata": {},
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  },
+  "reference_answer": {
+    "case_id": "case-1",
+    "title": "Reference Answer",
+    "question": "读取一份内部 agent eval 技术报告，重写为只保留核心架构、实现路径和典型工程问题的新报告并保存。",
+    "standard_answer": "应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。",
+    "expected_answer": "应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。",
+    "original_expected_answer": "用户的问题大概是：读取一份内部 agent eval 技术报告，重写为只保留核心架构、实现路径和典型工程问题的新报告并保存。\n\n我认为比较合理的回答是：\n应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。\n\n我主要会看这一点：必须读取源文档、核对代码结构、按架构/路径/工程问题重写，并通过 iWiki 保存。",
+    "rubric": "必须读取源文档、核对代码结构、按架构/路径/工程问题重写，并通过 iWiki 保存。",
+    "keywords": [
+      "内部 agent eval 技术报告",
+      "核心架构",
+      "实现路径",
+      "工程问题",
+      "源文档",
+      "项目结构",
+      "目标文档",
+      "IDE adapter",
+      "hook runtime",
+      "JSON 解析"
+    ],
+    "assertions": [],
+    "process_requirements": {
+      "must_include": [
+        "源文档",
+        "项目结构",
+        "目标文档"
+      ],
+      "must_not_include": [
+        "逐版本 changelog"
+      ]
+    },
+    "dataset_name": "reference-dataset",
+    "dataset_version": "v1",
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  }
+}

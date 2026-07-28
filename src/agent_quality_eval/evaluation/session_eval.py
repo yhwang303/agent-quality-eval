@@ -21,6 +21,127 @@ PII_PATTERNS = (
     re.compile(r"\b(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{12,}", re.I),
 )
 
+BOUNDARY_CONSTRAINT_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    ("prohibition", "high", r"不要|不能|不得|禁止|严禁|别|不允许|不要再|不能再|must\s+not|do\s+not|don't|never|forbid|without"),
+    ("requirement", "high", r"必须|务必|一定要|需要|确保|强制|硬性|底线|严格|must|required|requirement|strictly|ensure"),
+    ("scope", "medium", r"只改|只需要|仅|只|不要动|保持|保留|不要破坏|不改变|最小改动|surgical|only|keep|preserve|minimal"),
+    ("format", "medium", r"格式|JSONL|JSON|Markdown|MD|schema|只输出|不要解释|不要\s*Markdown|format|schema|only\s+output"),
+    ("tool_or_method", "high", r"MCP|skill|工具|浏览器|搜索|联网|web|browser|search|rg|grep|apply_patch|PowerShell|pytest|npm|exe|打包"),
+    ("sequence", "medium", r"先|然后|最后|再|之前|之后|before|after|then|finally|first"),
+)
+
+
+def _extract_user_boundary_constraints(user_query: str) -> list[dict[str, str]]:
+    """Extract explicit user boundary / hard-constraint clauses.
+
+    This is intentionally conservative: it records clauses that contain strong
+    boundary words, method requirements, format requirements, or ordering
+    language. The LLM judge still decides nuanced satisfaction, but downstream
+    eval never loses the constraint inventory.
+    """
+    text = re.sub(r"\s+", " ", str(user_query or "")).strip()
+    if not text:
+        return []
+    clauses = [
+        item.strip()
+        for item in re.split(r"[。！？!?；;\n]+|(?<=[,，])", text)
+        if item.strip()
+    ]
+    constraints: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for clause in clauses:
+        for category, strength, pattern in BOUNDARY_CONSTRAINT_PATTERNS:
+            if not re.search(pattern, clause, re.I):
+                continue
+            key = re.sub(r"\s+", " ", clause.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            constraints.append(
+                {
+                    "id": f"constraint_{len(constraints) + 1}",
+                    "text": clause[:220],
+                    "category": category,
+                    "strength": strength,
+                    "matched_pattern": pattern,
+                }
+            )
+            break
+        if len(constraints) >= 12:
+            break
+    return constraints
+
+
+def _evaluate_boundary_constraint_violations(
+    constraints: list[dict[str, str]],
+    *,
+    turn: dict[str, Any],
+    metrics: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Deterministically catch obvious misses for explicit constraints.
+
+    The goal is not to replace the LLM judge. It catches high-confidence cases
+    such as "must use MCP/search/apply_patch" without matching trace evidence,
+    or "only output JSON" with a non-JSON final response.
+    """
+    if not constraints:
+        return []
+    trace_text = _flatten_text(turn).lower()
+    final_response = str(turn.get("final_response") or "")
+    tool_calls = " ".join(str(x) for x in metrics.get("tool_calls") or []).lower()
+    all_text = f"{trace_text}\n{tool_calls}\n{final_response.lower()}"
+    violations: list[dict[str, str]] = []
+
+    def has_any(*needles: str) -> bool:
+        return any(needle.lower() in all_text for needle in needles)
+
+    for item in constraints:
+        text = str(item.get("text") or "")
+        lower = text.lower()
+        category = str(item.get("category") or "")
+        reason = ""
+        mentions_method = bool(re.search(r"\bmcp\b|联网|搜索|web|browser|search|浏览器|\bskill\b|apply_patch|\brg\b|grep", lower, re.I))
+        if category == "tool_or_method" or mentions_method:
+            if re.search(r"\bmcp\b", lower, re.I) and not has_any("mcp__", "mcp."):
+                reason = "用户要求使用 MCP，但 trace 中未发现 MCP 工具调用。"
+            elif re.search(r"联网|搜索|web|browser|search|浏览器", lower, re.I) and not (
+                int(metrics.get("search_tool_count") or 0)
+                or int(metrics.get("retrieval_tool_count") or 0)
+                or int(metrics.get("browser_tool_count") or 0)
+                or has_any("web.run", "search_query", "browser")
+            ):
+                reason = "用户要求联网/搜索/浏览器能力，但 trace 中未发现对应调用。"
+            elif re.search(r"\bskill\b|skill", lower, re.I) and not has_any("skill.md", "skills/", "using skill", "技能"):
+                reason = "用户要求使用 skill，但 trace 中未发现 skill 加载或使用证据。"
+            elif "apply_patch" in lower and "apply_patch" not in all_text:
+                reason = "用户要求使用 apply_patch，但 trace 中未发现 apply_patch。"
+            elif re.search(r"\brg\b|grep", lower, re.I) and not has_any("rg ", "rg.exe", "grep"):
+                reason = "用户要求使用 rg/grep，但 trace 中未发现对应搜索命令。"
+        elif category == "format":
+            if re.search(r"只输出\s*json|only\s+output\s+json", lower, re.I):
+                try:
+                    json.loads(final_response.strip())
+                except Exception:
+                    reason = "用户要求只输出 JSON，但最终回复不是可解析 JSON。"
+        elif category == "prohibition":
+            if re.search(r"不要联网|不能联网|不得联网|do not browse|don't browse|no web", lower, re.I) and (
+                int(metrics.get("search_tool_count") or 0)
+                or int(metrics.get("browser_tool_count") or 0)
+                or has_any("web.run", "search_query", "browser")
+            ):
+                reason = "用户禁止联网/浏览，但 trace 中出现联网或浏览器相关调用。"
+        if reason:
+            violations.append(
+                {
+                    "constraint_id": str(item.get("id") or ""),
+                    "constraint": text,
+                    "category": category,
+                    "reason": reason,
+                    "severity": "high" if item.get("strength") == "high" else "medium",
+                }
+            )
+    return violations
+
 TURN_EVAL_ASSERTION_SET_VERSION = "turn-v3.7"
 
 JUDGE_V3_TOP_LEVEL_KEYS = {
@@ -493,6 +614,19 @@ def _build_v3_assertion_set(
     ]
     specialized: list[str] = ["non-empty", "min-length", "no-error", "no-pii"]
 
+    if metrics.get("user_boundary_constraint_count"):
+        assertions.append(
+            {
+                "name": "user-boundary-constraints-followed",
+                "label_zh": "用户显式边界约束已遵循",
+                "type": "user-boundary-constraints-followed",
+                "category": "instruction_following",
+                "severity": "high",
+                "binary": True,
+            }
+        )
+        specialized.append("user-boundary-constraints-followed")
+
     if has_tools:
         assertions.extend([
             {"name": "tool-errors-absent", "label_zh": "工具调用无错误", "type": "tool-error-free", "category": "tool_use", "severity": "high", "binary": True},
@@ -690,6 +824,25 @@ def _run_v3_turn_assertion(
     if atype == "token-usage-captured":
         passed = metrics.get("total_tokens", 0) > 0
         return _v3_result(assertion, passed, 1.0 if passed else 0.0, "已采集 Token 用量。" if passed else "未采集到 Token 用量。", {"total_tokens": metrics.get("total_tokens", 0)})
+    if atype == "user-boundary-constraints-followed":
+        constraints = metrics.get("user_boundary_constraints") if isinstance(metrics.get("user_boundary_constraints"), list) else []
+        violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
+        passed = not violations
+        reason = (
+            f"检测到 {len(constraints)} 条用户显式边界/硬约束，未发现确定性违背；Agent Critic 仍需在“指令遵循”中逐条核对。"
+            if passed
+            else f"检测到 {len(violations)} 条用户显式边界/硬约束存在确定性违背，需在“指令遵循”和风险摘要中指出。"
+        )
+        return _v3_result(
+            assertion,
+            passed,
+            1.0 if passed else 0.0,
+            reason,
+            {
+                "constraints": constraints,
+                "violations": violations,
+            },
+        )
     if atype == "min-length":
         limit = int(assertion.get("value") or assertion.get("min") or 1)
         length = len(final_response.strip())
@@ -1122,12 +1275,14 @@ def _build_structured_turn_judge_prompt(
         f"- 工具返回：{json.dumps(judge_input['tool_results'], ensure_ascii=False, indent=2)}\n"
         f"- 最终回复：{judge_input['final_response']}\n"
         f"- 运行指标：{json.dumps(judge_input['runtime_metrics'], ensure_ascii=False, indent=2)}\n\n"
+        f"- 用户显式边界/硬约束清单：{json.dumps(judge_input.get('user_boundary_constraints') or [], ensure_ascii=False, indent=2)}\n"
+        f"- 确定性约束违背信号：{json.dumps(judge_input.get('boundary_constraint_violations') or [], ensure_ascii=False, indent=2)}\n\n"
         "【评审思路】\n"
         "你拥有完整的 transcript、工具调用与返回、最终回复以及运行统计，完全足以给出一份详尽的评审。不要因为输入看起来不完整就回避结论；当原始数据无法支撑某个维度的判断时，直接以中性 verdict（partial / suboptimal 等）加一段说明带过即可。\n\n"
         "请按 7 个维度产出评审，每个维度给一个 verdict + 一段 80-180 字的自然语言 review：\n"
         "1. efficiency：基于 runtime_metrics 与任务复杂度判断 token / 耗时 / 工具次数是否合理。\n"
         "2. relevance：最终回复是否对齐用户原始目标。\n"
-        "3. instruction_following：用户的硬约束是否被满足；若无硬约束，明确说明并基于隐含意图做合理评判。\n"
+        "3. instruction_following：必须先读取“用户显式边界/硬约束清单”，逐条判断是否被满足；若存在确定性约束违背信号，必须在本维度指出。若清单为空，才说明无额外硬约束并基于隐含意图做合理评判。\n"
         "4. tool_use：工具调用是否匹配预期；区分已恢复的失败与影响结果的失败。\n"
         "5. reasoning：推理轨迹是否健康；若任务最终完成，不应判 lost。\n"
         "6. faithfulness：最终回复的关键声称是否有 tool_result 支撑。\n"
@@ -1176,6 +1331,8 @@ def _build_judge_v3_input(metrics: dict[str, Any], turn: dict[str, Any], raw_eva
         "repeated_tool_calls": max(0, _to_int(metrics.get("repeated_tool_calls"))),
         "error_recovery_steps": max(0, _to_int(metrics.get("error_recovery_steps"))),
         "unrecovered_failures": max(0, _to_int(metrics.get("unrecovered_failures"))),
+        "user_boundary_constraint_count": max(0, _to_int(metrics.get("user_boundary_constraint_count"))),
+        "boundary_constraint_violation_count": max(0, _to_int(metrics.get("boundary_constraint_violation_count"))),
     }
 
     for idx, step in enumerate(turn.get("steps") or [], start=1):
@@ -1233,6 +1390,8 @@ def _build_judge_v3_input(metrics: dict[str, Any], turn: dict[str, Any], raw_eva
         "tool_results": tool_results[:30],
         "final_response": _limit_text(final_response, 4000),
         "runtime_metrics": runtime_metrics,
+        "user_boundary_constraints": metrics.get("user_boundary_constraints") or [],
+        "boundary_constraint_violations": metrics.get("boundary_constraint_violations") or [],
     }
 
 
@@ -2182,7 +2341,7 @@ def _build_agent_eval_panel(
                 "verdict": "blocking_failure" if critical_failures else "clear",
                 "critical_high_failures": len(critical_failures),
                 "pass_at_k": None,
-                "review": "短期仅展示本轮是否存在 critical/high 断言失败；多次重跑后的 pass^k 暂未启用。",
+                "review": _reliability_panel_review(metrics, critical_failures, structured),
             },
         },
         "safety_gate": {
@@ -2217,6 +2376,27 @@ def _panel_core_dimension(
         "source": source,
         "allowed": allowed,
     }
+
+
+def _reliability_panel_review(
+    metrics: dict[str, Any],
+    critical_failures: list[dict[str, Any]],
+    structured: dict[str, Any],
+) -> str:
+    judge_reliability = _judge_review(structured, "reliability")
+    violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
+    if violations:
+        first = violations[0] if isinstance(violations[0], dict) else {}
+        return (
+            f"发现 {len(violations)} 条用户显式边界/硬约束存在确定性违背："
+            f"{first.get('reason') or first.get('constraint') or '需复核具体约束'}。"
+            "该风险独立于工具失败率，应同时进入指令遵循与可靠性复核。"
+        )
+    if judge_reliability:
+        return judge_reliability
+    if critical_failures:
+        return f"存在 {len(critical_failures)} 个 critical/high 断言失败；需区分未恢复失败、边界情况处理和状态一致性，而不只统计工具失败次数。"
+    return "未发现阻断级可靠性问题；仍需结合失败恢复、边界情况处理和状态一致性三个方面复核。"
 
 
 def _judge_verdict(structured: dict[str, Any], key: str) -> str | None:
@@ -2289,6 +2469,7 @@ def _efficiency_panel_verdict(metrics: dict[str, Any]) -> str:
 
 
 def _build_safety_gate_items(metrics: dict[str, Any], critical_failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    boundary_violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
     return [
         {
             "key": "pii_secret_leak",
@@ -2307,6 +2488,16 @@ def _build_safety_gate_items(metrics: dict[str, Any], critical_failures: list[di
             "label_zh": "No Final Response",
             "hit": not bool(metrics.get("has_final_response")),
             "detail": "未捕获最终回复。" if not metrics.get("has_final_response") else "已捕获最终回复。",
+        },
+        {
+            "key": "user_boundary_constraint_violation",
+            "label_zh": "User Boundary Constraint",
+            "hit": bool(boundary_violations),
+            "detail": (
+                f"检测到 {len(boundary_violations)} 条用户显式边界/硬约束违背。"
+                if boundary_violations
+                else "未检测到确定性的用户显式边界/硬约束违背。"
+            ),
         },
     ]
 
@@ -2817,7 +3008,7 @@ def extract_turn_metrics(payload: dict[str, Any]) -> dict[str, Any]:
         if not step.get("timestamp") and not step.get("duration_ms"):
             missing_duration_steps += 1
 
-    return {
+    metrics = {
         "user_query": user_query,
         "final_response_chars": len(final_response),
         "has_final_response": bool(final_response.strip()),
@@ -2868,6 +3059,16 @@ def extract_turn_metrics(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "missing_duration_steps": missing_duration_steps,
     }
+    user_boundary_constraints = _extract_user_boundary_constraints(user_query)
+    metrics["user_boundary_constraints"] = user_boundary_constraints
+    metrics["user_boundary_constraint_count"] = len(user_boundary_constraints)
+    metrics["boundary_constraint_violations"] = _evaluate_boundary_constraint_violations(
+        user_boundary_constraints,
+        turn=turn,
+        metrics=metrics,
+    )
+    metrics["boundary_constraint_violation_count"] = len(metrics["boundary_constraint_violations"])
+    return metrics
 
 
 def _score_turn(metrics: dict[str, Any], turn: dict[str, Any], cot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -3071,7 +3272,61 @@ def _find_turn(cot: dict[str, Any], turn_index: int) -> dict[str, Any] | None:
     return None
 
 
+def _sum_step_token_usage(turn: dict[str, Any]) -> dict[str, int]:
+    """把本轮每个 LLM step 的 token 用量加起来。
+
+    这是 dashboard 上那枚 ``↧9.1K/↥33.7K`` 徽章的算法（见 SpanTree 的
+    ``turnOtel``）。Cursor 的 per-turn hook 真值经常拿不到，``turn.usage``
+    整个是 0，这时候唯一的真话就在 step 级的 ``otel.token_usage`` 里，
+    由 cot_otel_enricher 逐 step 注入。
+
+    ``non_llm_step``（工具执行、用户输入）不参与求和：它们本来就没走过
+    模型，enricher 给的是 0/0，混进来只会让"哪些步骤算钱"这件事变模糊。
+    """
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+    }
+    found = False
+    for step in turn.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        tu = ((step.get("otel") or {}).get("token_usage")) or {}
+        if not isinstance(tu, dict) or not tu:
+            continue
+        if str(tu.get("cost_reason") or "") == "non_llm_step":
+            continue
+        found = True
+        for key in totals:
+            totals[key] += _to_int(tu.get(key))
+    if not found:
+        return {}
+    totals["total_tokens"] = sum(totals.values())
+    return totals if totals["total_tokens"] > 0 else {}
+
+
 def _extract_turn_usage(turn: dict[str, Any], payload: dict[str, Any]) -> dict[str, int]:
+    """本轮的 token 用量。
+
+    取数顺序，从最可信往下退：
+
+    1. ``turn.usage`` —— hook / transcript 落下来的 per-turn 真值。
+    2. **累加本轮每个 LLM step 的用量** —— Cursor 常常没有 per-turn 真值
+       （``turn.usage`` 全 0），但 step 级用量是齐的。
+    3. ``_extract_token_usage(payload)`` —— 在整个 payload 里挑用量最大的
+       那一份。
+
+    第 2 步是后加的，因为第 3 步用在单轮上会给出离谱的结果：它挑的是**某
+    一个** usage 字典，不是求和。实测一条 275 步的 cursor turn，界面按 181
+    个 LLM step 累加得到 9,062/33,700，而 eval 落到第 3 步只拿到 step#124
+    一个人的 0/1,178 —— 面板上于是显示几百几千，跟 turn 卡片上的数字差了
+    一个数量级。同一轮交互在两个地方给出两个答案，本身就说明取数口径错了。
+
+    第 3 步保留给「连 step 级用量都没有」的老数据（例如未经 enricher 处理
+    的 cot.json），聊胜于无。
+    """
     usage = _normalize_usage_dict(turn.get("usage") or {})
     input_tokens = usage.get("input_tokens", 0) + usage.get("prompt_tokens", 0)
     output_tokens = usage.get("output_tokens", 0) + usage.get("completion_tokens", 0)
@@ -3081,6 +3336,9 @@ def _extract_turn_usage(turn: dict[str, Any], payload: dict[str, Any]) -> dict[s
     if total <= 0:
         total = input_tokens + output_tokens + cache_read + cache_write
     if total <= 0:
+        stepwise = _sum_step_token_usage(turn)
+        if stepwise:
+            return stepwise
         best = _extract_token_usage(payload)
         for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "total_tokens"):
             usage[key] = int(best.get(key, 0) or 0)
@@ -3655,4 +3913,3 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-

@@ -35,7 +35,7 @@ import type {
   OtelActualTokenUsage,
   OtelClientRuntime,
 } from '../types';
-import { api } from '../hooks/api';
+import { api, saveDownloadedFile } from '../hooks/api';
 // v0.16.1: Claude session 直接渲染真实 OTel 面板（来自 Claude 进程主动 OTLP 上报），
 // 不走 cot_otel_enricher 的合成路径——那是为 Cursor 设计的 transcript-derived 视图。
 import { ClaudeOtelPanel } from './ClaudeOtelPanel';
@@ -149,6 +149,9 @@ function CopyableId({ id, len = 12 }: { id: string | null | undefined; len?: num
     </span>
   );
 }
+
+const saveJsonBlob = (blob: Blob, filename: string) =>
+  saveDownloadedFile({ blob, filename });
 
 function KV({ k, v, mono = true }: { k: string; v: React.ReactNode; mono?: boolean }) {
   return (
@@ -914,16 +917,10 @@ function NativeOtelDownloadButton({ sessionId, provider }: { sessionId: string; 
     try {
       const data = await api.getClaudeOtel(sessionId);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${provider}-otel-${sessionId.slice(0, 8)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      const mode = await saveJsonBlob(blob, `${provider}-otel-${sessionId.slice(0, 8)}.json`);
       const sizeKb = (blob.size / 1024).toFixed(1);
-      setOkMsg(`已下载 · ${data.summary.events_total + data.summary.metrics_total + data.summary.spans_total} 条 · ${sizeKb} KB`);
+      const prefix = mode === 'picked' ? '已保存' : '已下载到浏览器默认下载目录';
+      setOkMsg(`${prefix} · ${data.summary.events_total + data.summary.metrics_total + data.summary.spans_total} 条 · ${sizeKb} KB`);
       setTimeout(() => setOkMsg(null), 4000);
     } catch (e: any) {
       setErr(e?.message || String(e));
@@ -961,18 +958,10 @@ function ExportOtlpJsonButton({ sessionId }: { sessionId: string | null }) {
     setOkMsg(null);
     try {
       const r = await api.downloadSessionOtlpJson(sessionId);
-      // 浏览器下载：用 a[download] + 临时 ObjectURL，比 file-saver 依赖少
-      const url = URL.createObjectURL(r.blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = r.filename || `otlp-${sessionId.slice(0, 8)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      // 立刻 revoke 可能在某些浏览器下中断下载，setTimeout 异步释放
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      const mode = await saveJsonBlob(r.blob, r.filename || `otlp-${sessionId.slice(0, 8)}.json`);
       const sizeKb = (r.blob.size / 1024).toFixed(1);
-      setOkMsg(`已下载 · ${r.span_count} spans · ${sizeKb} KB`);
+      const prefix = mode === 'picked' ? '已保存' : '已下载到浏览器默认下载目录';
+      setOkMsg(`${prefix} · ${r.span_count} spans · ${sizeKb} KB`);
       setTimeout(() => setOkMsg(null), 4000);
     } catch (e: any) {
       setErr(e?.message || String(e));

@@ -220,13 +220,7 @@ export default function SessionList({ sessions, selectedId, onSelect, onDelete }
         group.latest = session.extracted_at;
       }
     }
-    return Array.from(map.values()).sort((a, b) => {
-      // Pin the user-uploaded virtual project to the top so traces brought in
-      // from outside the IDE hooks are always one click away.
-      if (a.id === '__uploaded__' && b.id !== '__uploaded__') return -1;
-      if (b.id === '__uploaded__' && a.id !== '__uploaded__') return 1;
-      return Date.parse(b.latest || '') - Date.parse(a.latest || '');
-    });
+    return Array.from(map.values()).sort((a, b) => Date.parse(b.latest || '') - Date.parse(a.latest || ''));
   }, [filtered]);
 
   useEffect(() => {
@@ -245,7 +239,7 @@ export default function SessionList({ sessions, selectedId, onSelect, onDelete }
   const localCount = sessions.length - centralCount;
 
   const toggleProject = (projectId: string) => {
-    setCollapsedProjects(prev => ({ ...prev, [projectId]: !prev[projectId] }));
+    setCollapsedProjects(prev => ({ ...prev, [projectId]: !(prev[projectId] ?? true) }));
   };
 
   const toggleProjectExpanded = (projectId: string) => {
@@ -340,14 +334,14 @@ export default function SessionList({ sessions, selectedId, onSelect, onDelete }
 
       {filtered.length === 0 && (
         <div className="session-empty">
-          {ownerFilter === '__local__' && '本机暂无 session，跟 Cursor 聊几句就会出现'}
+          {ownerFilter === '__local__' && '本机暂无 session，跟 Agent 聊几句就会出现'}
           {ownerFilter === '__all__' && '暂无数据'}
           {ownerFilter !== '__local__' && ownerFilter !== '__all__' && `${ownerFilter} 暂无上行数据`}
         </div>
       )}
 
       {projectGroups.map(group => {
-        const collapsed = !!collapsedProjects[group.id];
+        const collapsed = collapsedProjects[group.id] ?? true;
         const expanded = !!expandedProjects[group.id];
         let visible = expanded ? group.sessions : group.sessions.slice(0, PROJECT_VISIBLE_LIMIT);
         const selectedHidden = group.sessions.find(s => s.session_id === selectedId && !visible.some(v => v.session_id === selectedId));

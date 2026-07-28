@@ -136,6 +136,144 @@ export interface OtelSessionListItem {
   last_modified: number;
 }
 
+// ─── 会话有序事件流 ────────────────────────────────────────
+//
+// 后端 agent_cot.trace 把主步流和 5 条并行时间线（权限 / 子代理 / 通知 /
+// 压缩 / 环境）拍平成一条按真实执行顺序排列的事件流。顺序真值只有这一份：
+// SpanTree 按它渲染，trace 导出用同一份结果，所以 UI 和导出不可能漂移。
+//
+// group_id / role / phase_id 是给 UI 重建折叠树用的；导出侧忽略它们。
+
+export interface TraceEvent {
+  seq: number;
+  session_id: string;
+  turn?: number;
+  type: string;
+  step_type?: string;
+  step_index?: number;
+  t_ms?: number;
+  ts?: string;
+  duration_ms?: number;
+  title?: string;
+  content?: string;
+  tool?: string;
+  tool_use_id?: string;
+  payload?: any;
+  plan?: Record<string, any>;
+  tokens?: number;
+  token_usage?: Record<string, any>;
+  truncated?: boolean;
+  original_len?: number;
+  is_error?: boolean;
+  otel_orphan?: boolean;
+  // UI 重建用
+  group_id?: number;
+  role?: 'leader' | 'child';
+  phase_id?: number;
+  // 当前 UI 不渲染（落在 turn 时间窗之外、或权限模式切换这类记录）
+  in_ui?: boolean;
+  // 无可用时间戳、排不进执行顺序，被追加在有序流之后
+  ordered?: boolean;
+}
+
+export interface SessionTimeline {
+  schema: string;
+  header: Record<string, any>;
+  events: TraceEvent[];
+}
+
+export interface DownloadedFile {
+  blob: Blob;
+  filename: string;
+}
+
+// 后端在 Content-Disposition 里给了带会话/轮次的规范文件名，优先用它；
+// 拿不到再退回调用方给的兜底名，别让用户存出一堆 "download" 之类的文件。
+async function downloadAttachment(
+  url: string,
+  fallbackName: string,
+): Promise<DownloadedFile> {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      const j = await resp.json();
+      if (j?.detail) detail = j.detail;
+    } catch {
+      // 非 JSON 错误体（例如反向代理返回的 HTML）就保留 HTTP 状态码
+    }
+    throw new Error(detail);
+  }
+  const blob = await resp.blob();
+  const cd = resp.headers.get('Content-Disposition') || '';
+  let filename = fallbackName;
+  const m = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i);
+  if (m && m[1]) {
+    try { filename = decodeURIComponent(m[1]); } catch { filename = m[1]; }
+  }
+  return { blob, filename };
+}
+
+// 按扩展名给"另存为"对话框一个像样的文件类型过滤。
+const _SAVE_TYPES: Record<string, { description: string; mime: string }> = {
+  json: { description: 'JSON file', mime: 'application/json' },
+  jsonl: { description: 'JSON Lines file', mime: 'application/x-ndjson' },
+  md: { description: 'Markdown file', mime: 'text/markdown' },
+};
+
+/**
+ * 把拿到的文件存到磁盘上。所有导出按钮都必须走这里。
+ *
+ * 三个看起来可有可无、实际缺一不可的细节，全都是踩过的坑：
+ *
+ * 1. `<a>` 必须先挂进 document 再 click。游离节点上的 click 在桌面壳
+ *    （Electron/WebView）里会被直接忽略，表现就是"点了没反应"。
+ * 2. `revokeObjectURL` 要延后。立刻回收会在下载真正开始前把 blob 抽掉，
+ *    同样是点了没反应。
+ * 3. 优先走 `showSaveFilePicker`，让用户自己选保存位置；桌面壳里有些实现
+ *    暴露了这个 API 却禁用它，所以失败要回退到 `<a download>`，而不是
+ *    把整个导出卡死。
+ *
+ * 这段逻辑之前在 OtelPanel 和 ClaudeOtelPanel 各抄了一份，新写的导出按钮
+ * 又照着"想当然"的版本重写了第三份，于是同一个"点了没反应"复发。现在只留
+ * 这一份，两个 OTel 面板也改成调它。
+ */
+export async function saveDownloadedFile(
+  { blob, filename }: DownloadedFile,
+): Promise<'picked' | 'downloaded'> {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  const kind = _SAVE_TYPES[ext] || { description: 'File', mime: 'application/octet-stream' };
+
+  const picker = (window as any).showSaveFilePicker;
+  if (typeof picker === 'function') {
+    try {
+      const handle = await picker({
+        suggestedName: filename,
+        types: [{ description: kind.description, accept: { [kind.mime]: [`.${ext}`] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return 'picked';
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        throw new Error('已取消保存');
+      }
+      // 暴露了 API 但被禁用：继续走下面的普通下载，别让导出直接失败
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return 'downloaded';
+}
+
 export const api = {
   getSessions: (): Promise<SessionOverview[]> =>
     axios.get(`${API_BASE}/api/sessions`).then(r => r.data),
@@ -280,6 +418,25 @@ export const api = {
       span_count: parseInt(resp.headers.get('X-Cot-Span-Count') || '0', 10) || 0,
     };
   },
+
+  // ─── 会话有序事件流（SpanTree 的渲染顺序来源）──────────────
+  getSessionTimeline: (sessionId: string): Promise<SessionTimeline> =>
+    axios.get(`${API_BASE}/api/sessions/${sessionId}/timeline`).then(r => r.data),
+
+  // 下载**一轮交互**的 trace。界面上每张交互卡片旁的导出按钮走这里。
+  // 只出 jsonl：一行一个事件，顺序即行号，下游脚本直接可读。
+  downloadTurnTrace: (sessionId: string, turnIndex: number) =>
+    downloadAttachment(
+      `${API_BASE}/api/sessions/${sessionId}/turns/${turnIndex}/export/trace.jsonl`,
+      `trace-${sessionId.slice(0, 8)}-turn${turnIndex}.jsonl`,
+    ),
+
+  // 下载一轮的完整 eval 结果（断言明细 / 维度面板 / hook 阶段评审）。
+  downloadTurnEval: (sessionId: string, turnIndex: number) =>
+    downloadAttachment(
+      `${API_BASE}/api/evals/session/${sessionId}/turn/${turnIndex}/export.json`,
+      `eval-${sessionId.slice(0, 8)}-turn${turnIndex}.json`,
+    ),
 
   // ─── v0.16.0: Claude Code 原生 OTel ────────────────────────
   getClaudeOtel: (sessionId: string): Promise<ClaudeOtelData> =>

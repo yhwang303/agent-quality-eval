@@ -1,0 +1,1 @@
+Provider 不能直接把测试集分发到 GUI IDE。Provider 面向 question→answer 的 HTTP API，而 IDE 编程任务的真值是 workspace diff、测试和命令结果。应把任务升级为包含初始 workspace、prompt 与 verifier 的任务卡，在干净 workspace 中分别执行，采集 trace，并按通过率、稳定性、工具次数、token 和耗时聚合。

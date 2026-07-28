@@ -1,0 +1,44 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "codex-019ef798-b92f-7eb2-b787-f4b08b24bbb7",
+    "source_turn_index": 5,
+    "agent_type": "codex",
+    "complexity": "simple",
+    "minimized": true
+  },
+  "session_id": "dataset-case-03-hook-restart-guidance",
+  "agent_type": "codex",
+  "turns": [
+    {
+      "turn_index": 5,
+      "user_query": "安装了之后需要重启ide吗",
+      "final_response": "需要，建议重启对应 IDE。\n\n原因是 hook 配置和脚本通常是在 IDE 进程启动时加载，尤其是 Cursor / CodeBuddy / Claude Internal / Codex 这种 hook runner 路径、runtime.json、脚本资产变了以后，不重启可能还在用旧进程里的旧环境或旧 hook 命令。\n\n推荐顺序：\n\n1. 关闭相关 IDE。\n2. 运行/安装新的 `agent-quality-eval-0.1.29.exe`，并重新执行项目里的 init/安装 hook 流程。\n3. 重启对应 IDE。\n4. 开一轮新会话验证 hook report 是否生成。\n\n如果只是替换 exe 但没有重新写 hook/runtime，旧 hook 可能还指向 `0.1.28-critic-fix.exe`。",
+      "steps": [
+        {
+          "step_index": 481,
+          "turn_index": 5,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "安装了之后需要重启ide吗"
+        },
+        {
+          "step_index": 482,
+          "turn_index": 5,
+          "step_type": "thinking_explicit",
+          "tool_name": "",
+          "content_excerpt": "需要，建议重启对应 IDE。\n\n原因是 hook 配置和脚本通常是在 IDE 进程启动时加载，尤其是 Cursor / CodeBuddy / Claude Internal / Codex 这种 hook runner 路径、runtime.json、脚本资产变了以后，不重启可能还在用旧进程里的旧环境或旧 hook 命令。\n\n推荐顺序：\n\n1. 关闭相关 IDE。\n2. 运行/安装新的 `agent-quality-eval-0.1.29.exe`，并重新执行项目里的 init/安装 hook 流程。\n3. 重启对应 IDE。\n4. 开一轮新会话验证 hook report 是否生成。\n\n如果只是替换 exe 但没有重新写 hook/runtime，旧 hook 可能还指向 `0.1.28-critic-fix.exe`。"
+        },
+        {
+          "step_index": 483,
+          "turn_index": 5,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "需要，建议重启对应 IDE。\n\n原因是 hook 配置和脚本通常是在 IDE 进程启动时加载，尤其是 Cursor / CodeBuddy / Claude Internal / Codex 这种 hook runner 路径、runtime.json、脚本资产变了以后，不重启可能还在用旧进程里的旧环境或旧 hook 命令。\n\n推荐顺序：\n\n1. 关闭相关 IDE。\n2. 运行/安装新的 `agent-quality-eval-0.1.29.exe`，并重新执行项目里的 init/安装 hook 流程。\n3. 重启对应 IDE。\n4. 开一轮新会话验证 hook report 是否生成。\n\n如果只是替换 exe 但没有重新写 hook/runtime，旧 hook 可能还指向 `0.1.28-critic-fix.exe`。"
+        }
+      ],
+      "total_steps": 3
+    }
+  ]
+}

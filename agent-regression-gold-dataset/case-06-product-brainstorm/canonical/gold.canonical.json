@@ -1,0 +1,101 @@
+{
+  "dataset": {
+    "name": "reference-dataset",
+    "version": "v1",
+    "description": "",
+    "metadata": {},
+    "cases": [
+      {
+        "id": "reference-dataset",
+        "title": "我对这次任务的预期",
+        "question": "为 solo developer 头脑风暴一个两周可做、可开源或订阅、能写入简历的产品，并通过交互和调研收敛方向。",
+        "expected_answer": "应先提问确认用户、形态和周期约束，再用 WebSearch 验证候选方向的竞品，否定过度拥挤方向，最后收敛到一个主推荐。推荐 SkillLab：测试 SKILL.md 的触发、漏触发和误触发，支持正负样本、批量运行、版本对比、报告导出和本地优先。给出两周 MVP、差异化、简历表述和下一步，并说明有竞品能验证需求。",
+        "original_expected_answer": "应先提问确认用户、形态和周期约束，再用 WebSearch 验证候选方向的竞品，否定过度拥挤方向，最后收敛到一个主推荐。推荐 SkillLab：测试 SKILL.md 的触发、漏触发和误触发，支持正负样本、批量运行、版本对比、报告导出和本地优先。给出两周 MVP、差异化、简历表述和下一步，并说明有竞品能验证需求。",
+        "rubric": "必须有交互澄清、竞品调研、单一主推荐、两周 MVP 和简历价值，不能只列空泛点子。",
+        "keywords": [
+          "solo developer",
+          "两周",
+          "开源",
+          "订阅",
+          "交互",
+          "调研",
+          "竞品",
+          "推荐",
+          "MVP",
+          "简历"
+        ],
+        "assertions": [],
+        "process_requirements": {},
+        "metadata": {},
+        "normalization": {
+          "mode": "schema_only",
+          "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+          "semantic_enrichment": "configured_judge"
+        }
+      }
+    ],
+    "_parse_warnings": [],
+    "content_hash": "6fc5250afda5",
+    "dataset_id": "reference-dataset-v1-6fc5250a",
+    "source_filename": "gold.raw.md",
+    "uploaded_at": "2026-07-17T11:54:07+00:00"
+  },
+  "case": {
+    "id": "reference-dataset",
+    "title": "我对这次任务的预期",
+    "question": "为 solo developer 头脑风暴一个两周可做、可开源或订阅、能写入简历的产品，并通过交互和调研收敛方向。",
+    "expected_answer": "应先提问确认用户、形态和周期约束，再用 WebSearch 验证候选方向的竞品，否定过度拥挤方向，最后收敛到一个主推荐。推荐 SkillLab：测试 SKILL.md 的触发、漏触发和误触发，支持正负样本、批量运行、版本对比、报告导出和本地优先。给出两周 MVP、差异化、简历表述和下一步，并说明有竞品能验证需求。",
+    "original_expected_answer": "应先提问确认用户、形态和周期约束，再用 WebSearch 验证候选方向的竞品，否定过度拥挤方向，最后收敛到一个主推荐。推荐 SkillLab：测试 SKILL.md 的触发、漏触发和误触发，支持正负样本、批量运行、版本对比、报告导出和本地优先。给出两周 MVP、差异化、简历表述和下一步，并说明有竞品能验证需求。",
+    "rubric": "必须有交互澄清、竞品调研、单一主推荐、两周 MVP 和简历价值，不能只列空泛点子。",
+    "keywords": [
+      "solo developer",
+      "两周",
+      "开源",
+      "订阅",
+      "交互",
+      "调研",
+      "竞品",
+      "推荐",
+      "MVP",
+      "简历"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "metadata": {},
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  },
+  "reference_answer": {
+    "case_id": "reference-dataset",
+    "title": "我对这次任务的预期",
+    "question": "为 solo developer 头脑风暴一个两周可做、可开源或订阅、能写入简历的产品，并通过交互和调研收敛方向。",
+    "standard_answer": "应先提问确认用户、形态和周期约束，再用 WebSearch 验证候选方向的竞品，否定过度拥挤方向，最后收敛到一个主推荐。推荐 SkillLab：测试 SKILL.md 的触发、漏触发和误触发，支持正负样本、批量运行、版本对比、报告导出和本地优先。给出两周 MVP、差异化、简历表述和下一步，并说明有竞品能验证需求。",
+    "expected_answer": "应先提问确认用户、形态和周期约束，再用 WebSearch 验证候选方向的竞品，否定过度拥挤方向，最后收敛到一个主推荐。推荐 SkillLab：测试 SKILL.md 的触发、漏触发和误触发，支持正负样本、批量运行、版本对比、报告导出和本地优先。给出两周 MVP、差异化、简历表述和下一步，并说明有竞品能验证需求。",
+    "original_expected_answer": "应先提问确认用户、形态和周期约束，再用 WebSearch 验证候选方向的竞品，否定过度拥挤方向，最后收敛到一个主推荐。推荐 SkillLab：测试 SKILL.md 的触发、漏触发和误触发，支持正负样本、批量运行、版本对比、报告导出和本地优先。给出两周 MVP、差异化、简历表述和下一步，并说明有竞品能验证需求。",
+    "rubric": "必须有交互澄清、竞品调研、单一主推荐、两周 MVP 和简历价值，不能只列空泛点子。",
+    "keywords": [
+      "solo developer",
+      "两周",
+      "开源",
+      "订阅",
+      "交互",
+      "调研",
+      "竞品",
+      "推荐",
+      "MVP",
+      "简历"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "dataset_name": "reference-dataset",
+    "dataset_version": "v1",
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  }
+}

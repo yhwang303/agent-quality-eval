@@ -674,6 +674,98 @@ def cmd_otlp_send(
 
 
 @main.command(
+    "export-trace",
+    help="Export one session's full trace (thinking / tools / plan / permissions).",
+)
+@click.argument("session_id", required=False, default=None)
+@click.option(
+    "--cot-path",
+    "cot_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Direct path to a cot.json (overrides SESSION_ID lookup).",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["jsonl", "json", "md"]),
+    default="jsonl",
+    show_default=True,
+    help="jsonl is the canonical format; md is the human/LLM-readable view.",
+)
+@click.option(
+    "-o",
+    "--output",
+    default=None,
+    type=click.Path(),
+    help="Output file or directory. Omit (or pass '-') to write to stdout.",
+)
+@click.option("--quiet", is_flag=True, help="Suppress the summary footer.")
+def cmd_export_trace(
+    session_id: str | None,
+    cot_path: str | None,
+    fmt: str,
+    output: str | None,
+    quiet: bool,
+) -> None:
+    from .commands import export_trace as export_cmd
+
+    if not session_id and not cot_path:
+        _die("either SESSION_ID positional argument or --cot-path is required.")
+
+    sys.exit(
+        export_cmd.run_export(
+            session_id=session_id,
+            cot_path=cot_path,
+            fmt=fmt,
+            output=output,
+            quiet=quiet,
+        )
+    )
+
+
+@main.command(
+    "dedupe-thinking",
+    help=(
+        "Clean duplicate thinking steps out of already-captured cot.json files "
+        "(Cursor's hook double-writes the same reasoning)."
+    ),
+)
+@click.argument("session_id", required=False, default=None)
+@click.option(
+    "--cot-dir",
+    "cot_dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Directory holding <sid>_cot.json. Defaults to the usual data root.",
+)
+@click.option(
+    "--apply/--dry-run",
+    "apply",
+    default=False,
+    show_default=True,
+    help="Dry run by default — it rewrites captured data, so opt in explicitly.",
+)
+@click.option("--quiet", is_flag=True, help="Suppress per-file output and the footer.")
+def cmd_dedupe_thinking(
+    session_id: str | None,
+    cot_dir: str | None,
+    apply: bool,
+    quiet: bool,
+) -> None:
+    from .commands import dedupe_thinking as dedupe_cmd
+
+    sys.exit(
+        dedupe_cmd.run_dedupe(
+            session_id=session_id,
+            cot_dir=cot_dir,
+            apply=apply,
+            quiet=quiet,
+        )
+    )
+
+
+@main.command(
     "uninstall",
     help="Remove our hooks. Backs up hooks.json and keeps captured data by default.",
 )

@@ -1,0 +1,6 @@
+用户的问题大概是：读取一份内部 agent eval 技术报告，重写为只保留核心架构、实现路径和典型工程问题的新报告并保存。
+
+我认为比较合理的回答是：
+应先读取源文档并核对项目结构，再写入目标文档。新报告覆盖本地优先的 IDE adapter→hook runtime→critic→前端/ingest 架构，live pulse 与 turn final critic 的实现路径，以及 frozen runner、stale placeholder、JSON 解析、hook evidence 归因等典型工程问题；不得复制逐版本 changelog，最终确认保存成功。
+
+我主要会看这一点：必须读取源文档、核对代码结构、按架构/路径/工程问题重写，并通过 iWiki 保存。

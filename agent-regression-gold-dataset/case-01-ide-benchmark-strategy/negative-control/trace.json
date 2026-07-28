@@ -1,0 +1,41 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "030ce5ad-1b06-4eee-bad9-3bab70aea0f2",
+    "source_turn_index": 19,
+    "agent_type": "claude",
+    "complexity": "simple",
+    "minimized": true
+  },
+  "session_id": "dataset-case-01-ide-benchmark-strategy",
+  "agent_type": "claude",
+  "turns": [
+    {
+      "turn_index": 19,
+      "user_query": "那比如说我现在本地是cursor,claude internal, codex, codebuddy这四个ide，对于同样的测试集比如说有50个，那我想看看到底哪一个ide更适合做这一类任务，我该怎么做？LetsGoAgentEval的provider真的能做到把测试集分发到这些ide中？",
+      "final_response": "[SYNTHETIC NEGATIVE CONTROL] Required outcome and process evidence intentionally omitted.",
+      "steps": [
+        {
+          "step_index": 58,
+          "turn_index": 19,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "那比如说我现在本地是cursor,claude internal, codex, codebuddy这四个ide，对于同样的测试集比如说有50个，那我想看看到底哪一个ide更适合做这一类任务，我该怎么做？LetsGoAgentEval的provider真的能做到把测试集分发到这些ide中？"
+        },
+        {
+          "step_index": 59,
+          "turn_index": 19,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "# 这是个非常关键的问题——LetsGoAgentEval 的 Provider **完全做不到** 把测试集分发到这四个 IDE\n\n## 一、先把 Provider 的真实能力讲清楚\n\nLetsGoAgentEval 的 `Provider` 抽象是这样的：\n\n```python\nclass BaseProvider:\n    def call(self, question: str) -> ProviderResponse:\n        # 输入一个 string，输出一个 string\n        ...\n```\n\n它内置的 `KnotProvider / OpenAIProvider / HunyuanProvider` 都只做一件事：\n\n> **拿一个 question 字符串 → POST 一个 HTTP API → 拿回 answer 字符串。**\n\n这是**单轮问答**调用模式，对应的\"被测对象\"是：\n\n- ✅ 一个**纯 LLM API 端点**（OpenAI / 混元 / Knot Agent）\n- ✅ 一个**对话式 Agent 服务**（接收 messa"
+        }
+      ],
+      "total_steps": 2
+    }
+  ],
+  "synthetic_control": {
+    "type": "negative",
+    "purpose": "Regression gate validation only; not a real agent output."
+  }
+}

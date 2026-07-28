@@ -1,0 +1,101 @@
+{
+  "dataset": {
+    "name": "reference-dataset",
+    "version": "v1",
+    "description": "",
+    "metadata": {},
+    "cases": [
+      {
+        "id": "agent-quality-eval-agent-cot-hook-ide",
+        "title": "安装 agent-quality-eval / agent-cot hook 后需要重启 IDE 吗",
+        "question": "安装 agent-quality-eval / agent-cot hook 后需要重启 IDE 吗",
+        "expected_answer": "需要，建议重启对应 IDE。hook 配置、runtime 路径和脚本资产通常在 IDE 进程启动时加载。推荐关闭 IDE，安装并重新 init hook，重启 IDE，再开启新会话验证 trace/critic 是否生成。",
+        "original_expected_answer": "需要，建议重启对应 IDE。hook 配置、runtime 路径和脚本资产通常在 IDE 进程启动时加载。推荐关闭 IDE，安装并重新 init hook，重启 IDE，再开启新会话验证 trace/critic 是否生成。",
+        "rubric": "确认是否需要重启 IDE 以加载 hook 配置和资产。",
+        "keywords": [
+          "重启",
+          "IDE",
+          "hook",
+          "配置",
+          "runtime",
+          "路径",
+          "脚本",
+          "资产",
+          "验证",
+          "trace"
+        ],
+        "assertions": [],
+        "process_requirements": {},
+        "metadata": {},
+        "normalization": {
+          "mode": "schema_only",
+          "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+          "semantic_enrichment": "configured_judge"
+        }
+      }
+    ],
+    "_parse_warnings": [],
+    "content_hash": "fab66a35b4e0",
+    "dataset_id": "reference-dataset-v1-fab66a35",
+    "source_filename": "gold.raw.md",
+    "uploaded_at": "2026-07-17T11:53:50+00:00"
+  },
+  "case": {
+    "id": "agent-quality-eval-agent-cot-hook-ide",
+    "title": "安装 agent-quality-eval / agent-cot hook 后需要重启 IDE 吗",
+    "question": "安装 agent-quality-eval / agent-cot hook 后需要重启 IDE 吗",
+    "expected_answer": "需要，建议重启对应 IDE。hook 配置、runtime 路径和脚本资产通常在 IDE 进程启动时加载。推荐关闭 IDE，安装并重新 init hook，重启 IDE，再开启新会话验证 trace/critic 是否生成。",
+    "original_expected_answer": "需要，建议重启对应 IDE。hook 配置、runtime 路径和脚本资产通常在 IDE 进程启动时加载。推荐关闭 IDE，安装并重新 init hook，重启 IDE，再开启新会话验证 trace/critic 是否生成。",
+    "rubric": "确认是否需要重启 IDE 以加载 hook 配置和资产。",
+    "keywords": [
+      "重启",
+      "IDE",
+      "hook",
+      "配置",
+      "runtime",
+      "路径",
+      "脚本",
+      "资产",
+      "验证",
+      "trace"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "metadata": {},
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  },
+  "reference_answer": {
+    "case_id": "agent-quality-eval-agent-cot-hook-ide",
+    "title": "安装 agent-quality-eval / agent-cot hook 后需要重启 IDE 吗",
+    "question": "安装 agent-quality-eval / agent-cot hook 后需要重启 IDE 吗",
+    "standard_answer": "需要，建议重启对应 IDE。hook 配置、runtime 路径和脚本资产通常在 IDE 进程启动时加载。推荐关闭 IDE，安装并重新 init hook，重启 IDE，再开启新会话验证 trace/critic 是否生成。",
+    "expected_answer": "需要，建议重启对应 IDE。hook 配置、runtime 路径和脚本资产通常在 IDE 进程启动时加载。推荐关闭 IDE，安装并重新 init hook，重启 IDE，再开启新会话验证 trace/critic 是否生成。",
+    "original_expected_answer": "需要，建议重启对应 IDE。hook 配置、runtime 路径和脚本资产通常在 IDE 进程启动时加载。推荐关闭 IDE，安装并重新 init hook，重启 IDE，再开启新会话验证 trace/critic 是否生成。",
+    "rubric": "确认是否需要重启 IDE 以加载 hook 配置和资产。",
+    "keywords": [
+      "重启",
+      "IDE",
+      "hook",
+      "配置",
+      "runtime",
+      "路径",
+      "脚本",
+      "资产",
+      "验证",
+      "trace"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "dataset_name": "reference-dataset",
+    "dataset_version": "v1",
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  }
+}

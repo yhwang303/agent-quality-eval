@@ -1,0 +1,101 @@
+{
+  "dataset": {
+    "name": "reference-dataset",
+    "version": "v1",
+    "description": "",
+    "metadata": {},
+    "cases": [
+      {
+        "id": "reference-dataset",
+        "title": "我保存的一份回答",
+        "question": "Skill A/B 是否全程 AI 自迭代？base 可互换是否消除了偏见？指标和盲化方案应该如何设计？",
+        "expected_answer": "该流程是 human-in-the-loop：AI 运行、评分和分析，人类审阅、反馈并决定停止。base/candidate 可互换只减少身份偏见，不能消除位置偏见和随机性。指标应分为少量 primary 决策指标与 diagnostic 指标。deterministic diff 应作为 primary，盲化或双向 LLM 比较只用于边界 case；Regression 保留确定性 gate。",
+        "original_expected_answer": "用户当时大概问的是：Skill A/B 是否全程 AI 自迭代？base 可互换是否消除了偏见？指标和盲化方案应该如何设计？\n\n该流程是 human-in-the-loop：AI 运行、评分和分析，人类审阅、反馈并决定停止。base/candidate 可互换只减少身份偏见，不能消除位置偏见和随机性。指标应分为少量 primary 决策指标与 diagnostic 指标。deterministic diff 应作为 primary，盲化或双向 LLM 比较只用于边界 case；Regression 保留确定性 gate。",
+        "rubric": "描述 human-in-the-loop 流程及偏见和指标设计的要求",
+        "keywords": [
+          "human-in-the-loop",
+          "AI 运行",
+          "评分",
+          "分析",
+          "身份偏见",
+          "位置偏见",
+          "随机性",
+          "primary 决策指标",
+          "diagnostic 指标",
+          "deterministic diff"
+        ],
+        "assertions": [],
+        "process_requirements": {},
+        "metadata": {},
+        "normalization": {
+          "mode": "schema_only",
+          "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+          "semantic_enrichment": "configured_judge"
+        }
+      }
+    ],
+    "_parse_warnings": [],
+    "content_hash": "b235b0b4f0bc",
+    "dataset_id": "reference-dataset-v1-b235b0b4",
+    "source_filename": "gold.raw.md",
+    "uploaded_at": "2026-07-17T11:53:55+00:00"
+  },
+  "case": {
+    "id": "reference-dataset",
+    "title": "我保存的一份回答",
+    "question": "Skill A/B 是否全程 AI 自迭代？base 可互换是否消除了偏见？指标和盲化方案应该如何设计？",
+    "expected_answer": "该流程是 human-in-the-loop：AI 运行、评分和分析，人类审阅、反馈并决定停止。base/candidate 可互换只减少身份偏见，不能消除位置偏见和随机性。指标应分为少量 primary 决策指标与 diagnostic 指标。deterministic diff 应作为 primary，盲化或双向 LLM 比较只用于边界 case；Regression 保留确定性 gate。",
+    "original_expected_answer": "用户当时大概问的是：Skill A/B 是否全程 AI 自迭代？base 可互换是否消除了偏见？指标和盲化方案应该如何设计？\n\n该流程是 human-in-the-loop：AI 运行、评分和分析，人类审阅、反馈并决定停止。base/candidate 可互换只减少身份偏见，不能消除位置偏见和随机性。指标应分为少量 primary 决策指标与 diagnostic 指标。deterministic diff 应作为 primary，盲化或双向 LLM 比较只用于边界 case；Regression 保留确定性 gate。",
+    "rubric": "描述 human-in-the-loop 流程及偏见和指标设计的要求",
+    "keywords": [
+      "human-in-the-loop",
+      "AI 运行",
+      "评分",
+      "分析",
+      "身份偏见",
+      "位置偏见",
+      "随机性",
+      "primary 决策指标",
+      "diagnostic 指标",
+      "deterministic diff"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "metadata": {},
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  },
+  "reference_answer": {
+    "case_id": "reference-dataset",
+    "title": "我保存的一份回答",
+    "question": "Skill A/B 是否全程 AI 自迭代？base 可互换是否消除了偏见？指标和盲化方案应该如何设计？",
+    "standard_answer": "该流程是 human-in-the-loop：AI 运行、评分和分析，人类审阅、反馈并决定停止。base/candidate 可互换只减少身份偏见，不能消除位置偏见和随机性。指标应分为少量 primary 决策指标与 diagnostic 指标。deterministic diff 应作为 primary，盲化或双向 LLM 比较只用于边界 case；Regression 保留确定性 gate。",
+    "expected_answer": "该流程是 human-in-the-loop：AI 运行、评分和分析，人类审阅、反馈并决定停止。base/candidate 可互换只减少身份偏见，不能消除位置偏见和随机性。指标应分为少量 primary 决策指标与 diagnostic 指标。deterministic diff 应作为 primary，盲化或双向 LLM 比较只用于边界 case；Regression 保留确定性 gate。",
+    "original_expected_answer": "用户当时大概问的是：Skill A/B 是否全程 AI 自迭代？base 可互换是否消除了偏见？指标和盲化方案应该如何设计？\n\n该流程是 human-in-the-loop：AI 运行、评分和分析，人类审阅、反馈并决定停止。base/candidate 可互换只减少身份偏见，不能消除位置偏见和随机性。指标应分为少量 primary 决策指标与 diagnostic 指标。deterministic diff 应作为 primary，盲化或双向 LLM 比较只用于边界 case；Regression 保留确定性 gate。",
+    "rubric": "描述 human-in-the-loop 流程及偏见和指标设计的要求",
+    "keywords": [
+      "human-in-the-loop",
+      "AI 运行",
+      "评分",
+      "分析",
+      "身份偏见",
+      "位置偏见",
+      "随机性",
+      "primary 决策指标",
+      "diagnostic 指标",
+      "deterministic diff"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "dataset_name": "reference-dataset",
+    "dataset_version": "v1",
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  }
+}

@@ -427,6 +427,153 @@ def download_session_otlp_json(
     )
 
 
+# ─── Trace 导出（会话级、按执行顺序）────────────────────────
+#
+# 与上面两个 OTLP 出口的区别：OTLP 遵循 OTel 的 span 模型，装不下 thinking
+# 正文、plan 快照、权限请求这些 agent 特有的东西。这里导出的是**这个项目自己
+# 捕捉到的全部事件**，按真实执行顺序排成一条流，供闭环 harness 里的 agent 读
+# 上一轮 trace 来判断优化方向。
+#
+# 会话隔离：只按 session_id 精确查 cot.json，查不到就 404——绝不回退到"最近
+# 一个 session"之类的兜底，否则 harness 会在无声中拿到别的会话的数据。
+
+def _load_flattened_trace(session_id: str) -> dict:
+    """按 session_id 精确加载并拍平一个会话的 trace。"""
+    cot_data = get_session_cot(session_id)
+    if cot_data is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"CoT data not found for session {session_id}",
+        )
+    # Claude 的 subagent 在 sidechain 里调的工具只出现在原生 OTel 通道，
+    # 主 transcript 看不见。不合并的话导出会整块丢掉这些调用。
+    otel_data = None
+    try:
+        otel_data = load_session_otel(session_id)
+    except Exception:
+        pass
+
+    try:
+        from agent_cot.trace import flatten_session
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"trace flattener 模块缺失：{e}",
+        )
+    return flatten_session(cot_data, otel=otel_data)
+
+
+@app.get("/api/sessions/{session_id}/timeline")
+def get_session_timeline(session_id: str):
+    """会话的有序事件流——前端 SpanTree 的渲染数据源。
+
+    前端不再自己排序：顺序（含并行时间线的穿插位置）由后端一次算好，导出走的
+    是同一份结果，UI 和导出因此不可能漂移。
+    """
+    return _load_flattened_trace(session_id)
+
+
+@app.get("/api/sessions/{session_id}/export/trace.{fmt}")
+def download_session_trace(session_id: str, fmt: str):
+    """下载会话 trace。``fmt`` 取 ``jsonl`` / ``json`` / ``md``。"""
+    try:
+        from agent_cot.trace import (
+            SUPPORTED_FORMATS,
+            render_json,
+            render_jsonl,
+            render_markdown,
+            sanitize_session_id,
+        )
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"trace exporter 模块缺失：{e}")
+
+    fmt = (fmt or "jsonl").lower()
+    if fmt not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的导出格式 {fmt!r}，可选：{', '.join(SUPPORTED_FORMATS)}",
+        )
+
+    flat = _load_flattened_trace(session_id)
+    renderer, media_type = {
+        "jsonl": (render_jsonl, "application/x-ndjson; charset=utf-8"),
+        "json": (render_json, "application/json; charset=utf-8"),
+        "md": (render_markdown, "text/markdown; charset=utf-8"),
+    }[fmt]
+    try:
+        body = renderer(flat)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"trace 渲染失败：{type(e).__name__}: {e}",
+        )
+
+    filename = f"trace-{sanitize_session_id(session_id)}.{fmt}"
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"; '
+                f"filename*=UTF-8''{filename}"
+            ),
+            "X-Cot-Event-Count": str(flat["header"].get("total_events") or 0),
+            "X-Cot-Trace-Schema": str(flat.get("schema") or ""),
+        },
+    )
+
+
+@app.get("/api/sessions/{session_id}/turns/{turn_index}/export/trace.jsonl")
+def download_turn_trace(session_id: str, turn_index: int):
+    """下载**一轮交互**的 trace。界面上每张交互卡片旁的导出按钮走这里。
+
+    只出 jsonl：一轮的量级本来就适合一行一个事件，多给几种格式只会让下游多
+    一层「该信哪个」的判断。要整条会话就用上面的
+    ``/export/trace.{jsonl,json,md}``。
+    """
+    cot_data = get_session_cot(session_id)
+    if cot_data is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"CoT data not found for session {session_id}",
+        )
+    otel_data = None
+    try:
+        otel_data = load_session_otel(session_id)
+    except Exception:
+        pass
+
+    try:
+        from agent_cot.trace import export_turn_trace
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"trace exporter 模块缺失：{e}")
+
+    try:
+        result = export_turn_trace(cot_data, turn_index, otel=otel_data)
+    except ValueError as e:
+        # 轮次号不存在属于调用方问题，不是服务端故障
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"trace 渲染失败：{type(e).__name__}: {e}",
+        )
+
+    filename = result["filename"]
+    return Response(
+        content=result["content"],
+        media_type=result["media_type"],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"; '
+                f"filename*=UTF-8''{filename}"
+            ),
+            "X-Cot-Event-Count": str(result["event_count"]),
+            "X-Cot-Trace-Schema": str(result["schema"]),
+        },
+    )
+
+
 # ─── 静态文件服务（生产模式） ──────────────────────────────
 #
 # Resolution order:

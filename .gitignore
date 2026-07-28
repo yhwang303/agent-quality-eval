@@ -11,6 +11,7 @@ dist/*
 !dist/agent-quality-eval-0.1.71.exe
 !dist/agent-quality-eval-1.0.5.exe
 !dist/agent-quality-eval-1.0.7.exe
+!dist/agent-quality-eval-1.0.14.exe
 
 *.spec.bak
 results/

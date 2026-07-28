@@ -252,7 +252,13 @@ def _passthrough_command(name: str):
     return _cmd
 
 
-for _name in ["agents", "init", "start", "stop", "status", "doctor", "upgrade", "uninstall"]:
+for _name in [
+    "agents", "init", "start", "stop", "status", "doctor", "upgrade", "uninstall",
+    # 闭环 harness 需要在脚本里离线导出上一轮的 trace，所以这条也得从 exe 透出去
+    "export-trace",
+    # 存量会话里 Cursor hook 双写留下的重复 thinking，只能靠这条命令补清
+    "dedupe-thinking",
+]:
     _passthrough_command(_name)
 
 

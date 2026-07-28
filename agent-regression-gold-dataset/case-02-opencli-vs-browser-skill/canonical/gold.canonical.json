@@ -1,0 +1,98 @@
+{
+  "dataset": {
+    "name": "reference-dataset",
+    "version": "v1",
+    "description": "",
+    "metadata": {},
+    "cases": [
+      {
+        "id": "case-1",
+        "title": "Reference Answer",
+        "question": "",
+        "expected_answer": "这是我手头整理出的参考结果，可能不完整：\n\nOpenCLI 是稳定、结构化、可重复的站点采集 CLI；浏览器 skill 是通过 CDP 动态探索和补救的 AI 操作层。MVP 应以 OpenCLI 为主、skill 兜底。规模化后两者都不应成为线上实时核心数据源，应离线采集并写入结构化数据库，用户请求只查询数据库。",
+        "original_expected_answer": "这是我手头整理出的参考结果，可能不完整：\n\nOpenCLI 是稳定、结构化、可重复的站点采集 CLI；浏览器 skill 是通过 CDP 动态探索和补救的 AI 操作层。MVP 应以 OpenCLI 为主、skill 兜底。规模化后两者都不应成为线上实时核心数据源，应离线采集并写入结构化数据库，用户请求只查询数据库。",
+        "rubric": "",
+        "keywords": [
+          "OpenCLI",
+          "结构化",
+          "站点采集",
+          "浏览器 skill",
+          "CDP",
+          "动态探索",
+          "MVP",
+          "离线采集",
+          "结构化数据库"
+        ],
+        "assertions": [],
+        "process_requirements": {},
+        "metadata": {},
+        "normalization": {
+          "mode": "schema_only",
+          "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+          "semantic_enrichment": "configured_judge"
+        }
+      }
+    ],
+    "_parse_warnings": [],
+    "content_hash": "1956d1e0473c",
+    "dataset_id": "reference-dataset-v1-1956d1e0",
+    "source_filename": "gold.raw.txt",
+    "uploaded_at": "2026-07-17T11:53:44+00:00"
+  },
+  "case": {
+    "id": "case-1",
+    "title": "Reference Answer",
+    "question": "",
+    "expected_answer": "这是我手头整理出的参考结果，可能不完整：\n\nOpenCLI 是稳定、结构化、可重复的站点采集 CLI；浏览器 skill 是通过 CDP 动态探索和补救的 AI 操作层。MVP 应以 OpenCLI 为主、skill 兜底。规模化后两者都不应成为线上实时核心数据源，应离线采集并写入结构化数据库，用户请求只查询数据库。",
+    "original_expected_answer": "这是我手头整理出的参考结果，可能不完整：\n\nOpenCLI 是稳定、结构化、可重复的站点采集 CLI；浏览器 skill 是通过 CDP 动态探索和补救的 AI 操作层。MVP 应以 OpenCLI 为主、skill 兜底。规模化后两者都不应成为线上实时核心数据源，应离线采集并写入结构化数据库，用户请求只查询数据库。",
+    "rubric": "",
+    "keywords": [
+      "OpenCLI",
+      "结构化",
+      "站点采集",
+      "浏览器 skill",
+      "CDP",
+      "动态探索",
+      "MVP",
+      "离线采集",
+      "结构化数据库"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "metadata": {},
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  },
+  "reference_answer": {
+    "case_id": "case-1",
+    "title": "Reference Answer",
+    "question": "",
+    "standard_answer": "这是我手头整理出的参考结果，可能不完整：\n\nOpenCLI 是稳定、结构化、可重复的站点采集 CLI；浏览器 skill 是通过 CDP 动态探索和补救的 AI 操作层。MVP 应以 OpenCLI 为主、skill 兜底。规模化后两者都不应成为线上实时核心数据源，应离线采集并写入结构化数据库，用户请求只查询数据库。",
+    "expected_answer": "这是我手头整理出的参考结果，可能不完整：\n\nOpenCLI 是稳定、结构化、可重复的站点采集 CLI；浏览器 skill 是通过 CDP 动态探索和补救的 AI 操作层。MVP 应以 OpenCLI 为主、skill 兜底。规模化后两者都不应成为线上实时核心数据源，应离线采集并写入结构化数据库，用户请求只查询数据库。",
+    "original_expected_answer": "这是我手头整理出的参考结果，可能不完整：\n\nOpenCLI 是稳定、结构化、可重复的站点采集 CLI；浏览器 skill 是通过 CDP 动态探索和补救的 AI 操作层。MVP 应以 OpenCLI 为主、skill 兜底。规模化后两者都不应成为线上实时核心数据源，应离线采集并写入结构化数据库，用户请求只查询数据库。",
+    "rubric": "",
+    "keywords": [
+      "OpenCLI",
+      "结构化",
+      "站点采集",
+      "浏览器 skill",
+      "CDP",
+      "动态探索",
+      "MVP",
+      "离线采集",
+      "结构化数据库"
+    ],
+    "assertions": [],
+    "process_requirements": {},
+    "dataset_name": "reference-dataset",
+    "dataset_version": "v1",
+    "normalization": {
+      "mode": "schema_only",
+      "note": "Input was normalized into eval fields without changing the expected answer semantics.",
+      "semantic_enrichment": "configured_judge"
+    }
+  }
+}

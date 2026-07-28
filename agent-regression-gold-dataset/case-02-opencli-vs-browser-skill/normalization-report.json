@@ -1,0 +1,43 @@
+{
+  "schema_version": "gold-normalization-report-v1",
+  "mode": "llm-assisted-schema-normalization",
+  "mapping": [
+    {
+      "source_path": "expected_answer",
+      "canonical_field": "expected_answer",
+      "conversion": "direct"
+    },
+    {
+      "source_path": "raw_content",
+      "canonical_field": "expected_answer",
+      "conversion": "LLM-assisted normalization"
+    },
+    {
+      "source_path": "semantic extraction",
+      "canonical_field": "process_requirements",
+      "conversion": "LLM-assisted normalization"
+    },
+    {
+      "source_path": "derived_from_expected_answer",
+      "canonical_field": "keywords",
+      "conversion": "LLM-assisted normalization"
+    }
+  ],
+  "warnings": [
+    "Configured Judge was used to identify or derive missing Gold fields; review the normalized result before confirming."
+  ],
+  "unmapped_fields": [
+    "id",
+    "title"
+  ],
+  "has_gold_evidence": true,
+  "eval_mode": "gold",
+  "canonical_hash": "4c2af3e7aaa2bbef",
+  "llm_normalization": {
+    "status": "completed",
+    "provider": "timiai",
+    "model": "gpt-4o-mini",
+    "latency_ms": 5731,
+    "cache_hit": false
+  }
+}

@@ -1,0 +1,170 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "030ce5ad-1b06-4eee-bad9-3bab70aea0f2",
+    "source_turn_index": 1,
+    "agent_type": "claude",
+    "complexity": "complex",
+    "minimized": true
+  },
+  "session_id": "dataset-case-05-iwiki-report-rewrite",
+  "agent_type": "claude",
+  "turns": [
+    {
+      "turn_index": 1,
+      "user_query": "[URL]  你现在要做的事情是用iwiki的MCP来阅读这个关于agent eval的技术报告，然后这个技术报告里面实际上包含了很杂乱的内容，比如bug修复，还有很多增量写入的内容，并不是一个成体系的完整的技术报告。你现在需要做的事情是给我进行总结，只关注核心的技术架构，实现路径和遇到的一些典型的问题，然后给我写一个新的技术报告到[URL]",
+      "final_response": "已完成。新报告已写入 [URL] ，标题《Agent Quality Eval：面向真实智能体轨迹的本地评测平台技术报告》。\n\n报告聚焦三块：\n- **核心架构**：四层（IDE adapter → hook runtime → critic runner → 前端）、两套 schema（`agent-critic-v1`、`agent-critic-live-v1`）、产物落盘路径与 ingest 链路。\n- **实现路径**：Agent Judge 的 live pulse 与 turn-边界 final critic、五类 IDE hook 接入约束、A/B 二次对比归纳、Regression Mode 的 deterministic gate + LLM judge 分层、Gold Standard 单 trace 绑定。\n- **典型问题**：frozen exe 与 hook runner、stale running placeholder、Critic JSON 截断、`isError` 字段误扫、hook evidence 被识别为 manual fallback、配置目录拼写差异、包体差异等 8 类工程问题及修复路径。\n\n并补充了项目代码结构（`src/agent_quality_eval/evaluation/` 各模块职责）、测试覆盖、设计原则提炼与当前发布产物（0.1.47 主线 / 0.1.43 回退基线）。原报告中所有 changelog 风格的逐版本细节、已撤回的 CBM suite / CLI exe 尝试、bug 修复时间线均已剔除。\n\n任务为单一写入操作，未使用 TaskCreate/Update。",
+      "steps": [
+        {
+          "step_index": 1,
+          "turn_index": 1,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "[URL]  你现在要做的事情是用iwiki的MCP来阅读这个关于agent eval的技术报告，然后这个技术报告里面实际上包含了很杂乱的内容，比如bug修复，还有很多增量写入的内容，并不是一个成体系的完整的技术报告。你现在需要做的事情是给我进行总结，只关注核心的技术架构，实现路径和遇到的一些典型的问题，然后给我写一个新的技术报告到[URL]"
+        },
+        {
+          "step_index": 2,
+          "turn_index": 1,
+          "step_type": "thinking_explicit",
+          "tool_name": "",
+          "content_excerpt": "I need to pull up the existing technical report to understand what's already documented, then reorganize and enhance it with current project code before publishing the updated version to the new location."
+        },
+        {
+          "step_index": 3,
+          "turn_index": 1,
+          "step_type": "tool_decision",
+          "tool_name": "mcp__iWiki__getDocument",
+          "content_excerpt": "调用工具 mcp__iWiki__getDocument：{\"docid\": \"4022550596\"}"
+        },
+        {
+          "step_index": 5,
+          "turn_index": 1,
+          "step_type": "tool_decision",
+          "tool_name": "mcp__iWiki__getDocument",
+          "content_excerpt": "调用工具 mcp__iWiki__getDocument：{\"docid\": \"4023090244\"}"
+        },
+        {
+          "step_index": 7,
+          "turn_index": 1,
+          "step_type": "tool_execution",
+          "tool_name": "mcp__iWiki__getDocument",
+          "content_excerpt": "## 1. 前言：从 LLM Judge 到 Agent Judge\n\n早期评测链路主要是 LLM Judge：在 trace 或 CoT 数据落盘之后，后端把结构化运行数据、工具调用、最终回复等信息拼成 prompt，再调用一个评审模型输出语义评审结果。这种方式可以较快补齐“断言规则无法覆盖的主观质量判断”，但它本质上是 post-hoc 的模型评审，存在三个产品化问题：\n\n1. 评审触发点不在 IDE/Agent 执行链路内，用户难以判断“评审是否真的伴随主 agent 执行过程发生”。\n2. 评审来源不清晰，容易把 hook 阶段产物、手动重跑结果、纯兜底断言混在一起展示。\n3. 缺少执行中的监督状态，用户在 trace 已出现但 eval 尚未生成时不知道系统是在运行、失败还是未触发。\n\n0.1.21 到 0.1.28 的改造目标，是把语义评审层从 LLM Judge 升级为 Agent Judge，也就是由 IDE hook 触发一个只读的 Agent Critic sidecar，在主 agent 执行过程中记录 live supervisor 状态，并在 turn 边界生"
+        },
+        {
+          "step_index": 8,
+          "turn_index": 1,
+          "step_type": "error_recovery",
+          "tool_name": "",
+          "content_excerpt": "检测到错误，进行恢复处理：## 1. 前言：从 LLM Judge 到 Agent Judge\n\n早期评测链路主要是 LLM Judge：在 trace 或 CoT 数据落盘之后，后端把结构化运行数据、工具调用、最终回复等信息拼成 prompt，再调用一个评审模型输出语义评审结果。这种方式可以较快补齐“断言规则无法覆盖的主观质量判断”，但它本质上是 post-hoc 的模型评审，存在三个产品化问题：\n\n1. 评审触发点不在"
+        },
+        {
+          "step_index": 9,
+          "turn_index": 1,
+          "step_type": "tool_execution",
+          "tool_name": "mcp__iWiki__getDocument",
+          "content_excerpt": "(mcp__iWiki__getDocument completed with no output)"
+        },
+        {
+          "step_index": 10,
+          "turn_index": 1,
+          "step_type": "thinking_explicit",
+          "tool_name": "",
+          "content_excerpt": "I need to examine the target document URL and get a sense of the existing project structure before I can put together a thorough technical report."
+        },
+        {
+          "step_index": 11,
+          "turn_index": 1,
+          "step_type": "tool_decision",
+          "tool_name": "mcp__iWiki__metadata",
+          "content_excerpt": "调用工具 mcp__iWiki__metadata：{\"docid\": \"4023090244\"}"
+        },
+        {
+          "step_index": 12,
+          "turn_index": 1,
+          "step_type": "tool_decision",
+          "tool_name": "Bash",
+          "content_excerpt": "调用工具 Bash：{\"command\": \"cd D:/agent-quality-eval && ls src/agent_quality_eval/ && cat pyproject.toml | head -30\", \"description\": \"List project source structure\"}"
+        },
+        {
+          "step_index": 13,
+          "turn_index": 1,
+          "step_type": "tool_execution",
+          "tool_name": "mcp__iWiki__metadata",
+          "content_excerpt": "{\"contentid\":4023090244,\"createtime\":\"2026-06-29 14:30:59\",\"updatetime\":\"2026-06-29 14:31:03\",\"content_changetime\":\"2026-06-29 14:31:03\",\"creator\":\"milkwang\",\"creator_cn\":\"王宇涵\",\"creator_displayname\":\"milkwang(王宇涵)\",\"last_modifier\":\"milkwang\",\"last_modifier_cn\":\"王宇涵\",\"last_modifier_displayname\":\"milkwang(王宇涵)\",\"content_last_modifier\":\"milkwang\",\"content_last_modifier_cn\":\"王宇涵\",\"content_last_modifier_displayname\":\"milkwang(王宇涵)\",\"parentid\":4019993195,\"parents\":[4019993193,4019993195],\"status\":\"cur"
+        },
+        {
+          "step_index": 14,
+          "turn_index": 1,
+          "step_type": "tool_execution",
+          "tool_name": "Bash",
+          "content_excerpt": "__init__.py\n__main__.py\n__pycache__\nassets\ncli.py\nevaluation\nfrozen_entry.py\nobservation\ntemplates\n[build-system]\nrequires = [\"setuptools>=68\", \"wheel\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"agent-quality-eval\"\nversion = \"0.1.47\"\ndescription = \"Local-first agent observability plus automated evaluation and A/B testing.\"\nreadme = \"README.md\"\nrequires-python = \">=3.10\"\nlicense = { text = \"MIT\" }\nauthors = [{ name = \"agent-quality-eval contributors\" }]\nkeywords = [\"agent\", \"eval"
+        },
+        {
+          "step_index": 15,
+          "turn_index": 1,
+          "step_type": "tool_decision",
+          "tool_name": "Bash",
+          "content_excerpt": "调用工具 Bash：{\"command\": \"cd D:/agent-quality-eval && ls src/agent_quality_eval/evaluation/ && ls src/agent_quality_eval/observation/\", \"description\": \"List evaluation and observation modules\"}"
+        },
+        {
+          "step_index": 16,
+          "turn_index": 1,
+          "step_type": "tool_execution",
+          "tool_name": "Bash",
+          "content_excerpt": "__init__.py\n__pycache__\napi.py\nassertions.py\ncbm_dataset.py\ncompare.py\nconfig.py\ncritic.py\nhook_health.py\nlive_critic.py\nmodels.py\nproviders.py\nreference_eval.py\nregression.py\nreport.py\nrunner.py\nsession_eval.py\nsettings.py\nstore.py\n__init__.py\n__pycache__"
+        },
+        {
+          "step_index": 17,
+          "turn_index": 1,
+          "step_type": "tool_decision",
+          "tool_name": "Bash",
+          "content_excerpt": "调用工具 Bash：{\"command\": \"cd D:/agent-quality-eval && ls src/agent_quality_eval/observation/ src/agent_cot/ 2>/dev/null; ls src/\", \"description\": \"List src tree\"}"
+        },
+        {
+          "step_index": 18,
+          "turn_index": 1,
+          "step_type": "tool_execution",
+          "tool_name": "Bash",
+          "content_excerpt": "src/agent_cot/:\n__init__.py\n__pycache__\n_assets.py\n_build_assets.py\nagents\nassets\ncli.py\ncommands\ncot-extractor\ndiag.py\ndoctor\nfrozen_entry.py\ninstaller\npy.typed\nresponse-verifier\nruntime\n\nsrc/agent_quality_eval/observation/:\n__init__.py\n__pycache__\nagent_cot\nagent_quality_eval\nagent_quality_eval.egg-info"
+        },
+        {
+          "step_index": 19,
+          "turn_index": 1,
+          "step_type": "thinking_explicit",
+          "tool_name": "",
+          "content_excerpt": "I'm organizing a comprehensive technical report for the wiki document, structuring it around the product's background, architecture, data models, the Agent Judge execution flow, and the multi-IDE integration approach."
+        },
+        {
+          "step_index": 20,
+          "turn_index": 1,
+          "step_type": "pre_tool_reasoning",
+          "tool_name": "",
+          "content_excerpt": "Now I have enough context. Let me write the polished public technical report and save it to the target page."
+        },
+        {
+          "step_index": 21,
+          "turn_index": 1,
+          "step_type": "tool_decision",
+          "tool_name": "mcp__iWiki__saveDocument",
+          "content_excerpt": "调用工具 mcp__iWiki__saveDocument：{\"docid\": 4023090244, \"title\": \"Agent Quality Eval：面向真实智能体轨迹的本地评测平台技术报告\", \"body\": \"# Agent Quality Eval：面向真实智能体轨迹的本地评测平台技术报告\\n\\n> 本文是 Agent Quality Eval（以下简称 AQE）从 0.1.21 演进至 0.1.47 的技术总结。它仅保留核心架构、实现路径与典型工程问题，不再包含逐版本 changelog 与已废弃尝试。读者对象为希望落地\\\"真实智能体轨迹评测\\\"的工程团队。\\n\\n---\\n\\n## 1. 项目定位\\n\\nAQE 不是一个通用的 LLM benchmark 平台，也不是一个测试集驱动的回归门禁系统。它的产品边界是：\\n\\n1. **面向真实 IDE 智能体的轨迹观测**：以 hook 为入口，捕获 Codex / Claude Code / Claude Internal / Cursor / CodeBuddy 在用户真实开发会话中产生的事件流、工具调用、CoT "
+        },
+        {
+          "step_index": 22,
+          "turn_index": 1,
+          "step_type": "tool_execution",
+          "tool_name": "mcp__iWiki__saveDocument",
+          "content_excerpt": "保存成功"
+        },
+        {
+          "step_index": 23,
+          "turn_index": 1,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "已完成。新报告已写入 [URL] ，标题《Agent Quality Eval：面向真实智能体轨迹的本地评测平台技术报告》。\n\n报告聚焦三块：\n- **核心架构**：四层（IDE adapter → hook runtime → critic runner → 前端）、两套 schema（`agent-critic-v1`、`agent-critic-live-v1`）、产物落盘路径与 ingest 链路。\n- **实现路径**：Agent Judge 的 live pulse 与 turn-边界 final critic、五类 IDE hook 接入约束、A/B 二次对比归纳、Regression Mode 的 deterministic gate + LLM judge 分层、Gold Standard 单 trace 绑定。\n- **典型问题**：frozen exe 与 hook runner、stale running placeholder、Critic JSON 截断、`isError` 字段误扫、hook evidence 被识别为 manual fallback、配置"
+        }
+      ],
+      "total_steps": 21
+    }
+  ]
+}

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from .compare import compare_experiments
@@ -751,6 +752,43 @@ def latest_turn_eval(session_id: str, turn_index: int, db_path: str | None = Non
     if report is None or _is_legacy_auto_queued_eval(report):
         raise HTTPException(status_code=404, detail=f"turn eval not found: {session_id} #{turn_index}")
     return report
+
+
+@router.get("/session/{session_id}/turn/{turn_index}/export.json")
+def download_turn_eval(session_id: str, turn_index: int, db_path: str | None = None):
+    """下载一轮的完整 eval 结果（断言明细、维度面板、hook 阶段评审全在里面）。
+
+    会话隔离：只按 (session_id, turn_index) 精确查，查不到就 404——绝不回退到
+    「最近一次评估」之类的兜底，否则导出的文件会张冠李戴。
+    """
+    from .eval_export import export_turn_eval
+
+    report = DatasetStore(db_path).get_latest_turn_eval(session_id, turn_index)
+    if report is None or _is_legacy_auto_queued_eval(report):
+        raise HTTPException(
+            status_code=404,
+            detail=f"turn eval not found: {session_id} #{turn_index}",
+        )
+    try:
+        result = export_turn_eval(report)
+    except Exception as e:  # noqa: BLE001 - 渲染失败要带类型名回前端便于定位
+        raise HTTPException(
+            status_code=500,
+            detail=f"eval 导出失败：{type(e).__name__}: {e}",
+        )
+
+    filename = result["filename"]
+    return Response(
+        content=result["content"],
+        media_type=result["media_type"],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"; '
+                f"filename*=UTF-8''{filename}"
+            ),
+            "X-Eval-Export-Schema": str(result["schema"]),
+        },
+    )
 
 
 @router.get("/live/{session_id}")

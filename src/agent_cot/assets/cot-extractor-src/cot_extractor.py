@@ -3680,6 +3680,11 @@ def _inject_agent_thoughts(
     # 和 thinking_inter，文本几乎一字不差（行尾换行差 1 字符）。前端会显示成
     # 视觉上的"重复行"，把这些 inter 直接清掉，只留 explicit（后者带 hook
     # 元数据：observed_at_ms / generation_id / duration_ms / model）。
+    # 先清 hook 双写（explicit vs explicit），再清跨通道重复（inter vs
+    # explicit）。顺序不能反：双写留下的两条 explicit 会让 inter 去重的
+    # 比对集合里出现重复项，虽然结果一样但白跑一遍。
+    double_written = _dedupe_double_written_thoughts(turns_cot)
+    stats["thinking_double_written_deduped"] = double_written
     deduped = _dedupe_redundant_thinking_inter(turns_cot)
     stats["thinking_inter_deduped"] = deduped
 
@@ -3842,8 +3847,105 @@ def _attach_cursor_token_usage(
     }
 
 
+def _recount_turn_steps(turn: "TurnCoT", keep: List["ThoughtStep"]) -> None:
+    """删完步骤后同步 turn 上的计数，否则前端 KPI 会跟树对不上。"""
+    turn.steps = keep
+    turn.total_steps = len(keep)
+    _think_types_local = (
+        StepType.THINKING_INTER,
+        StepType.THINKING_EXPLICIT,
+        "thinking_intermediate",
+    )
+    turn.thinking_depth = sum(1 for s in keep if s.step_type in _think_types_local)
+
+
+# 同一条 thinking 被 hook 推两次的时间间隔上限。实测中位数 163ms、最大 1.3s，
+# 5s 留足余量；模型真的重复思考同一段话时间隔在分钟级，不会被误判。
+_DUP_THOUGHT_WINDOW_MS = 5000
+
+# 短于这个长度的思考正文不足以当身份标识，不参与文本判重。
+_DUP_THOUGHT_MIN_CHARS = 24
+
+# 整条正文就是一个方括号/尖括号占位符的形态，例如 ``[REDACTED]``。
+_PLACEHOLDER_THOUGHT_RE = re.compile(r"^[\[\<\(][A-Za-z_\s\.…-]{2,30}[\]\>\)]$")
+
+
+def _is_dedupe_safe_thought(norm: str) -> bool:
+    """这段正文能不能拿来做「同一条思考」的判定依据。
+
+    去重是按正文相同来判的，所以正文本身必须具备区分度。两类文本不具备：
+
+    * 占位符 —— transcript 里被抹掉的思考统一写成 ``[REDACTED]``，一个 turn
+      里能出现二十多条，它们是**不同**的思考，只是正文看不见了。按文本判重
+      会把它们合成一条，等于凭空删掉真实步骤（实测一条会话里 48 组全是这种）。
+    * 过短文本 —— 十几个字符的巧合重复概率不低，不值得为它冒删错的风险。
+
+    宁可漏删几条重复，也不能删掉真实步骤：重复只是看着啰嗦，删错则是数据丢失。
+    """
+    if len(norm) < _DUP_THOUGHT_MIN_CHARS:
+        return False
+    return not _PLACEHOLDER_THOUGHT_RE.match(norm)
+
+
+def _dedupe_double_written_thoughts(turns_cot: List["TurnCoT"]) -> int:
+    """同一条 thinking 被 afterAgentThought hook 写了两次时只留一条。
+
+    Why: Cursor 对同一段 reasoning 会推两次 hook —— 一次带裸的
+    ``generation_id``（``<uuid>``），一次带按思考序号加了后缀的
+    （``<uuid>-3-yn8q``）。两次的正文一字不差，只有 ``generation_id`` 和
+    ``observed_at_ms`` 不同，于是前端 Thinking Phase 里每条思考都显示两遍，
+    ``thinking_depth`` 也翻倍。
+
+    判定条件是「同一 turn 内正文完全相同」且「时间差在
+    ``_DUP_THOUGHT_WINDOW_MS`` 之内」，两个条件缺一不可：只看正文会误删
+    模型真的把同一句话想了两遍的情况，只看时间会误删两条不同的短思考。
+
+    被丢掉那条的 ``generation_id`` 记进保留条的
+    ``metadata.duplicate_generation_ids``——hook 双写是上游行为，留个凭据
+    方便日后回查，也免得看起来像我们凭空少了数据。
+    """
+    removed = 0
+    for turn in turns_cot:
+        steps = turn.steps
+        if not steps:
+            continue
+        keep: List[ThoughtStep] = []
+        # 归一化正文 → 已保留的那条 step，用于判重
+        seen: Dict[str, ThoughtStep] = {}
+        for s in steps:
+            if s.step_type != StepType.THINKING_EXPLICIT:
+                keep.append(s)
+                continue
+            norm = _norm_thought_text(s.content)
+            if not norm or not _is_dedupe_safe_thought(norm):
+                keep.append(s)
+                continue
+            prev = seen.get(norm)
+            if prev is not None:
+                t_prev = (prev.metadata or {}).get("observed_at_ms") or 0
+                t_cur = (s.metadata or {}).get("observed_at_ms") or 0
+                close = (
+                    isinstance(t_prev, (int, float))
+                    and isinstance(t_cur, (int, float))
+                    and abs(int(t_cur) - int(t_prev)) <= _DUP_THOUGHT_WINDOW_MS
+                )
+                if close:
+                    gid = (s.metadata or {}).get("generation_id")
+                    if gid:
+                        dupes = prev.metadata.setdefault("duplicate_generation_ids", [])
+                        if gid not in dupes:
+                            dupes.append(gid)
+                    removed += 1
+                    continue
+            seen[norm] = s
+            keep.append(s)
+        if len(keep) != len(steps):
+            _recount_turn_steps(turn, keep)
+    return removed
+
+
 def _dedupe_redundant_thinking_inter(turns_cot: List["TurnCoT"]) -> int:
-    """删除跟相邻 thinking_explicit 文本几乎相同的 thinking_inter。
+    """删除跟同轮 thinking_explicit 文本几乎相同的 thinking_inter。
 
     Why: Cursor 同时把 reasoning 流写入两条独立通道：
     - afterAgentThought hook → events.jsonl → 通道 5 → thinking_explicit
@@ -3854,65 +3956,60 @@ def _dedupe_redundant_thinking_inter(turns_cot: List["TurnCoT"]) -> int:
     19/120 条 explicit 都有 inter 副本）。
 
     去重规则：
-    - 在 ±2 step 窗口内，对每条 thinking_inter 检查是否存在文本几乎相同
-      的 thinking_explicit（完全相等，或长度差 ≤10 且其中一者是另一者的
-      前缀）；
+    - 在**整个 turn 内**找文本几乎相同的 thinking_explicit（完全相等，或
+      长度差 ≤10 且其中一者是另一者的前缀）；
     - 命中的 thinking_inter 整行删掉；
     - 保留 explicit 的原因：它带完整 hook 元数据（observed_at_ms /
       generation_id / model / duration_ms），下游 OTel / observability
       模块都依赖这些字段。
+
+    早先这里只扫 ±2 个 step 的窗口，但两条通道的注入位置由各自的时间戳
+    决定，实测同一条思考的 inter 与 explicit 常常相隔几十甚至两百多个
+    step（一条 cursor 会话里 782 组重复因此全部漏掉）。既然判定依据是
+    「正文几乎相同」而不是「挨得近」，窗口就没有存在意义。
     """
     removed = 0
     for turn in turns_cot:
         steps = turn.steps
         if not steps:
             continue
-        # 把 explicit 的归一化文本预先打成集合，O(N²)→O(N)（只扫窗口内）
+        exp_norms = [
+            n for n in (
+                _norm_thought_text(s.content) for s in steps
+                if s.step_type == StepType.THINKING_EXPLICIT
+            ) if n and _is_dedupe_safe_thought(n)
+        ]
+        if not exp_norms:
+            continue
+        exp_exact = set(exp_norms)
         keep: List[ThoughtStep] = []
-        n = len(steps)
-        for i, s in enumerate(steps):
+        for s in steps:
             if s.step_type != StepType.THINKING_INTER:
                 keep.append(s)
                 continue
             inter_norm = _norm_thought_text(s.content)
-            if not inter_norm:
+            if not inter_norm or not _is_dedupe_safe_thought(inter_norm):
                 keep.append(s)
                 continue
+            if inter_norm in exp_exact:
+                removed += 1
+                continue
+            # 容忍尾部省略号 / 标点差异：长度差 ≤10 且前缀对得上
             matched = False
-            for j in (i - 2, i - 1, i + 1, i + 2):
-                if 0 <= j < n:
-                    sj = steps[j]
-                    if sj.step_type != StepType.THINKING_EXPLICIT:
-                        continue
-                    exp_norm = _norm_thought_text(sj.content)
-                    if not exp_norm:
-                        continue
-                    if exp_norm == inter_norm:
-                        matched = True
-                        break
-                    # 长度差 <= 10 且其中一者前缀匹配（容忍尾部省略号 / 标点差异）
-                    if abs(len(exp_norm) - len(inter_norm)) <= 10:
-                        short, long = sorted([exp_norm, inter_norm], key=len)
-                        head_len = max(0, len(short) - 5)
-                        if head_len > 0 and long.startswith(short[:head_len]):
-                            matched = True
-                            break
+            for exp_norm in exp_norms:
+                if abs(len(exp_norm) - len(inter_norm)) > 10:
+                    continue
+                short, long = sorted([exp_norm, inter_norm], key=len)
+                head_len = max(0, len(short) - 5)
+                if head_len > 0 and long.startswith(short[:head_len]):
+                    matched = True
+                    break
             if matched:
                 removed += 1
                 continue
             keep.append(s)
-        if removed > 0 or len(keep) != n:
-            turn.steps = keep
-            turn.total_steps = len(keep)
-            # thinking_depth 也要重算
-            _think_types_local = (
-                StepType.THINKING_INTER,
-                StepType.THINKING_EXPLICIT,
-                "thinking_intermediate",
-            )
-            turn.thinking_depth = sum(
-                1 for s in keep if s.step_type in _think_types_local
-            )
+        if len(keep) != len(steps):
+            _recount_turn_steps(turn, keep)
     return removed
 
 

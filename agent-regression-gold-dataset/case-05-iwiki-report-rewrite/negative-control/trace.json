@@ -1,0 +1,41 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "030ce5ad-1b06-4eee-bad9-3bab70aea0f2",
+    "source_turn_index": 1,
+    "agent_type": "claude",
+    "complexity": "complex",
+    "minimized": true
+  },
+  "session_id": "dataset-case-05-iwiki-report-rewrite",
+  "agent_type": "claude",
+  "turns": [
+    {
+      "turn_index": 1,
+      "user_query": "[URL]  你现在要做的事情是用iwiki的MCP来阅读这个关于agent eval的技术报告，然后这个技术报告里面实际上包含了很杂乱的内容，比如bug修复，还有很多增量写入的内容，并不是一个成体系的完整的技术报告。你现在需要做的事情是给我进行总结，只关注核心的技术架构，实现路径和遇到的一些典型的问题，然后给我写一个新的技术报告到[URL]",
+      "final_response": "[SYNTHETIC NEGATIVE CONTROL] Required outcome and process evidence intentionally omitted.",
+      "steps": [
+        {
+          "step_index": 1,
+          "turn_index": 1,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "[URL]  你现在要做的事情是用iwiki的MCP来阅读这个关于agent eval的技术报告，然后这个技术报告里面实际上包含了很杂乱的内容，比如bug修复，还有很多增量写入的内容，并不是一个成体系的完整的技术报告。你现在需要做的事情是给我进行总结，只关注核心的技术架构，实现路径和遇到的一些典型的问题，然后给我写一个新的技术报告到[URL]"
+        },
+        {
+          "step_index": 23,
+          "turn_index": 1,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "已完成。新报告已写入 [URL] ，标题《Agent Quality Eval：面向真实智能体轨迹的本地评测平台技术报告》。\n\n报告聚焦三块：\n- **核心架构**：四层（IDE adapter → hook runtime → critic runner → 前端）、两套 schema（`agent-critic-v1`、`agent-critic-live-v1`）、产物落盘路径与 ingest 链路。\n- **实现路径**：Agent Judge 的 live pulse 与 turn-边界 final critic、五类 IDE hook 接入约束、A/B 二次对比归纳、Regression Mode 的 deterministic gate + LLM judge 分层、Gold Standard 单 trace 绑定。\n- **典型问题**：frozen exe 与 hook runner、stale running placeholder、Critic JSON 截断、`isError` 字段误扫、hook evidence 被识别为 manual fallback、配置"
+        }
+      ],
+      "total_steps": 2
+    }
+  ],
+  "synthetic_control": {
+    "type": "negative",
+    "purpose": "Regression gate validation only; not a real agent output."
+  }
+}

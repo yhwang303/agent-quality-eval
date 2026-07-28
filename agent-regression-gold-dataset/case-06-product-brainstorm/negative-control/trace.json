@@ -1,0 +1,41 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "3239f078-7456-42e0-8aa9-5d624020c479",
+    "source_turn_index": 1,
+    "agent_type": "cursor",
+    "complexity": "complex",
+    "minimized": true
+  },
+  "session_id": "dataset-case-06-product-brainstorm",
+  "agent_type": "cursor",
+  "turns": [
+    {
+      "turn_index": 1,
+      "user_query": "<timestamp>Thursday, Jul 16, 2026, 11:57 AM (UTC+8)</timestamp>\n<user_query>\n现在感觉思维枯竭，明明vibe coding时代有很多可以做的东西，但是我不知道应该做什么我自己没有什么想法，就是我现在特别想vibecoding一个项目出来，可以最后开源也可以最后收费订阅，反正我的需求是做一个真正有意义的产品，有一定的月活和流量，问题现在在于做什么我没有任何思路，你去给我头脑风暴一些思路然后跟我进行交互，要求是不要复杂，我一个人做，可以是plugin或者任意产品，只要有意义即可，能往简历上写作为一段高质量的项目经历\n</user_query>",
+      "final_response": "[SYNTHETIC NEGATIVE CONTROL] Required outcome and process evidence intentionally omitted.",
+      "steps": [
+        {
+          "step_index": 1,
+          "turn_index": 1,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "<timestamp>Thursday, Jul 16, 2026, 11:57 AM (UTC+8)</timestamp>\n<user_query>\n现在感觉思维枯竭，明明vibe coding时代有很多可以做的东西，但是我不知道应该做什么我自己没有什么想法，就是我现在特别想vibecoding一个项目出来，可以最后开源也可以最后收费订阅，反正我的需求是做一个真正有意义的产品，有一定的月活和流量，问题现在在于做什么我没有任何思路，你去给我头脑风暴一些思路然后跟我进行交互，要求是不要复杂，我一个人做，可以是plugin或者任意产品，只要有意义即可，能往简历上写作为一段高质量的项目经历\n</user_query>"
+        },
+        {
+          "step_index": 43,
+          "turn_index": 1,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "连续查重后，有个重要结论：**完全没有竞品并不现实，也不是必要条件**。你要的是可上线、有用户、能写进简历的产品，不是创造一个全新品类。竞品反而证明需求存在，关键是切口更窄、体验更简单。\n\n结合你的技术栈和当前积累，我建议最终聚焦：\n\n## SkillLab：Agent Skill 可视化测试台\n\n面向 Cursor、Claude Code、Codex Skill 作者，解决：\n\n> 写完 `SKILL.md` 后，不知道它什么时候会触发、是否误触发、修改后是变好还是变差。\n\n两周 MVP：\n\n- 拖入一个 Skill 文件夹。\n- 添加“应该触发”和“不该触发”的测试语句。\n- 批量运行测试。\n- 展示命中率、漏触发、误触发。\n- 对比两个 Skill 版本。\n- 导出测试报告。\n- 支持中英文测试语句。\n\n差异化不是做另一个复杂 CLI，而是：\n\n- 可视化，无需写 YAML。\n- 只解决 Skill 触发测试，不做大而全 Agent Eval。\n- 中文优先，同时支持英文。\n- 给出具体的 description 修改建议。\n- 本地优先，测试数据不上传。\n\n产品路径：\n\n- 第"
+        }
+      ],
+      "total_steps": 2
+    }
+  ],
+  "synthetic_control": {
+    "type": "negative",
+    "purpose": "Regression gate validation only; not a real agent output."
+  }
+}

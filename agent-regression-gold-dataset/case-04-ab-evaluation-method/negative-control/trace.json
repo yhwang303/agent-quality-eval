@@ -1,0 +1,41 @@
+{
+  "schema_version": "aqe-regression-trace-v1",
+  "provenance": {
+    "source": "local observed trace",
+    "source_session_id": "codebuddy-46d404cd26524755885527dc186d0530",
+    "source_turn_index": 3,
+    "agent_type": "codebuddy",
+    "complexity": "simple",
+    "minimized": true
+  },
+  "session_id": "dataset-case-04-ab-evaluation-method",
+  "agent_type": "codebuddy",
+  "turns": [
+    {
+      "turn_index": 3,
+      "user_query": "我总结一下anthropic这个，实际上就是有/没有skill的一个abtest，然后两个情况同步跑，做上下文隔离，主要的eval就是靠三个subagent：eval+盲审+综合分析，然后根据analysis的结果不断迭代skill，全过程都是ai自己迭代吗，有人类的参与吗？\n还有一个就是我当前这个项目，是有base和候选之分，但实际上两者并没有权重上的区别，意思就是我可以任意选择trace当base，不存在llm带系统偏见，无非就是此时是基于llm的eval。对于单条trace的eval，现在用的是基于hook的subagent，同样的思路。\n我现在有两个疑问：1. 对于评价指标，我看anthropic这边没有用太多，基本都是一些基础的数据，然后我这边的项目是用了一些更精细的指标，这些指标是够用的是吗？2. 如果我想复现这个md文档的方法，我该怎么做？就是我把当前我的这个观测+eval的内容当作一个前端展示，但是实际在abtest中的时候还是用A\\的这个方案，现在的调llm当作兜底，这样可以吗？",
+      "final_response": "[SYNTHETIC NEGATIVE CONTROL] Required outcome and process evidence intentionally omitted.",
+      "steps": [
+        {
+          "step_index": 113,
+          "turn_index": 3,
+          "step_type": "user_input",
+          "tool_name": "",
+          "content_excerpt": "我总结一下anthropic这个，实际上就是有/没有skill的一个abtest，然后两个情况同步跑，做上下文隔离，主要的eval就是靠三个subagent：eval+盲审+综合分析，然后根据analysis的结果不断迭代skill，全过程都是ai自己迭代吗，有人类的参与吗？\n还有一个就是我当前这个项目，是有base和候选之分，但实际上两者并没有权重上的区别，意思就是我可以任意选择trace当base，不存在llm带系统偏见，无非就是此时是基于llm的eval。对于单条trace的eval，现在用的是基于hook的subagent，同样的思路。\n我现在有两个疑问：1. 对于评价指标，我看anthropic这边没有用太多，基本都是一些基础的数据，然后我这边的项目是用了一些更精细的指标，这些指标是够用的是吗？2. 如果我想复现这个md文档的方法，我该怎么做？就是我把当前我的这个观测+eval的内容当作一个前端展示，但是实际在abtest中的时候还是用A\\的这个方案，现在的调llm当作兜底，这样可以吗？"
+        },
+        {
+          "step_index": 115,
+          "turn_index": 3,
+          "step_type": "final_response",
+          "tool_name": "",
+          "content_excerpt": "## 疑问1：anthropic 流程有人类参与吗？\n\n**不是纯 AI 自迭代，人类是每轮的关键评审者。**\n\n从 SKILL.md 原文可以看到分工：\n\n| 阶段 | 谁做 |\n|---|---|\n| 写 skill 草稿 / 起草 assertions | AI |\n| 跑 with/without skill、grader 打分、aggregate、analyzer | AI |\n| 在 viewer 里审阅输出、留 feedback | **人类** |\n| 读 feedback 后改进 skill | AI |\n| 决定何时停止迭代 | **人类** |\n\n原文关键句：\n- *\"When you're done, come back here and let me know.\"* —— 每轮要等人类看完反馈\n- *\"Empty feedback means the user thought it was fine. Focus your improvements on the test cases where the user had specific complaints"
+        }
+      ],
+      "total_steps": 2
+    }
+  ],
+  "synthetic_control": {
+    "type": "negative",
+    "purpose": "Regression gate validation only; not a real agent output."
+  }
+}

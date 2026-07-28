@@ -448,7 +448,71 @@ def _normalize_reliability_evidence(dim: dict[str, Any], metrics: dict[str, Any]
         evidence.append({"ref": "reliability:edge_case_handling", "quote": "未针对边界情况处理给出独立证据，按中性处理。", "source": "trace"})
     if "reliability:state_consistency" not in existing_refs:
         evidence.append({"ref": "reliability:state_consistency", "quote": "未针对状态一致性给出独立证据，按中性处理。", "source": "trace"})
+    violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
+    if violations:
+        first = violations[0] if isinstance(violations[0], dict) else {}
+        evidence.append(
+            {
+                "ref": "instruction_following:user_boundary_constraint_violation",
+                "quote": str(first.get("reason") or first.get("constraint") or "检测到用户显式边界/硬约束违背。")[:240],
+                "source": "trace",
+            }
+        )
+        review = str(dim.get("review") or "")
+        if "边界" not in review and "约束" not in review:
+            dim["review"] = (
+                f"除失败恢复、边界情况和状态一致性外，本轮还检测到 {len(violations)} 条用户显式约束违背；"
+                "该风险会直接影响交付可靠性，需要与指令遵循一起复核。"
+            )
+        if str(dim.get("verdict") or "") == "clear":
+            dim["verdict"] = "minor_issues"
     dim["evidence"] = _cap_evidence_keeping_required(evidence, set(required))
+    return dim
+
+
+def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(dim, dict):
+        return dim
+    dim = dict(dim)
+    constraints = metrics.get("user_boundary_constraints") if isinstance(metrics.get("user_boundary_constraints"), list) else []
+    violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
+    evidence = [item for item in (dim.get("evidence") or []) if isinstance(item, dict)]
+    existing_refs = {str(item.get("ref") or "") for item in evidence}
+    for idx, item in enumerate(constraints[:6], start=1):
+        ref = f"user_query:constraint_{idx}"
+        if ref in existing_refs:
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        evidence.append(
+            {
+                "ref": ref,
+                "quote": f"约束『{text[:120]}』需要在 trace 中逐条核对是否遵守。",
+                "source": "user_query",
+            }
+        )
+    for idx, item in enumerate(violations[:4], start=1):
+        evidence.append(
+            {
+                "ref": f"user_query:constraint_violation_{idx}",
+                "quote": str(item.get("reason") or item.get("constraint") or "检测到用户显式约束违背。")[:240],
+                "source": "trace",
+            }
+        )
+    if constraints and not violations:
+        review = str(dim.get("review") or "")
+        if "无附加约束" in review or "未提附加约束" in review or "没有额外约束" in review:
+            dim["review"] = f"用户提出了 {len(constraints)} 条显式边界/硬约束，不能按“无附加约束”处理；需逐条核对是否被满足。"
+            if str(dim.get("verdict") or "") == "yes":
+                dim["verdict"] = "partial"
+    if violations:
+        dim["review"] = (
+            f"用户提出了 {len(constraints)} 条显式边界/硬约束，其中 {len(violations)} 条出现确定性违背；"
+            f"{violations[0].get('reason') if isinstance(violations[0], dict) else '需复核约束执行情况'}"
+        )
+        dim["verdict"] = "no" if any(str(v.get("severity") or "") == "high" for v in violations if isinstance(v, dict)) else "partial"
+    dim["evidence"] = evidence[:10]
     return dim
 
 
@@ -586,6 +650,7 @@ def _normalize_structured(data: dict[str, Any], metrics: dict[str, Any]) -> dict
             raw.get("review") or fb["review"],
             raw.get("evidence"),
         )
+    out["instruction_following"] = _normalize_instruction_evidence(out["instruction_following"], metrics)
     out["efficiency"] = _normalize_efficiency_evidence(out["efficiency"], metrics)
     out["reliability"] = _normalize_reliability_evidence(out["reliability"], metrics)
     out["claims"] = _normalize_claims(data.get("claims"))
