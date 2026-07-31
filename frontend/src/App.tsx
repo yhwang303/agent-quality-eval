@@ -1066,9 +1066,23 @@ function AbCompareDialog({
     tool_use: '工具使用',
     reasoning: '推理路径',
     instruction_following: '指令遵循',
+    workflow_adherence: '流程遵循',
     faithfulness: '忠实度',
     efficiency: '效率',
     reliability: '可靠性',
+  };
+  const assertionGroupLabels: Record<string, string> = {
+    task_outcome: '任务结果',
+    execution_integrity: '执行完整性',
+    instruction_following: '指令遵循',
+    workflow_adherence: '流程遵循',
+    tool_use: '工具使用',
+    code_delivery: '代码交付',
+    research_grounding: '研究与证据',
+    planning_execution: '计划执行',
+    computer_use: 'GUI/浏览器操作',
+    gold_process: 'Gold 过程要求',
+    optional_judge: 'LLM 评审',
   };
   const dimensions = Object.keys(dimensionLabels);
   const fmtPct = (value?: number | null) => {
@@ -1111,12 +1125,12 @@ function AbCompareDialog({
   const diffs = Array.isArray(result?.diffs) ? result.diffs : [];
   const groupMap = new Map<string, any>();
   for (const group of baselineData.groups || []) {
-    groupMap.set(group.key, { key: group.key, label: group.label, baseline: group.pass_rate, candidate: null });
+    groupMap.set(group.key, { key: group.key, label: assertionGroupLabels[group.key] || group.label, baseline: group.pass_rate, candidate: null });
   }
   for (const group of candidateData.groups || []) {
     const row = groupMap.get(group.key) || { key: group.key, label: group.label, baseline: null, candidate: null };
     row.candidate = group.pass_rate;
-    row.label = group.label || row.label;
+    row.label = assertionGroupLabels[group.key] || group.label || row.label;
     groupMap.set(group.key, row);
   }
   const metricRows = [
@@ -1162,9 +1176,11 @@ function AbCompareDialog({
   const regressionDimensionLabels: Record<string, string> = {
     capability_preservation: '能力保持',
     user_goal_coverage: '用户目标覆盖',
+    instruction_obligation_regression: '指令约束保持',
+    workflow_adherence_regression: '流程遵循退化',
     behavioral_change_risk: '行为变化风险',
     evidence_faithfulness: '证据忠实度',
-    workflow_integrity: '流程完整性',
+    workflow_integrity: '过程稳定性',
     efficiency_regression: '效率退化',
   };
   const regressionDimensions = Object.keys(regressionDimensionLabels);

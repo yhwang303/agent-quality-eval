@@ -159,7 +159,8 @@ def test_turn_eval_reports_tokens_tps_and_persists(tmp_path, monkeypatch):
     assert report["overall_score"] == report["quality_score"]
     assert report["score_breakdown"] is None
     assert report["eval_panel"]["method"] == "no_weighted_total_v1"
-    assert len(report["eval_panel"]["core_dimensions"]) == 5
+    assert len(report["eval_panel"]["core_dimensions"]) == 6
+    assert any(item["key"] == "workflow_adherence" for item in report["eval_panel"]["core_dimensions"])
     assert report["eval_panel"]["diagnostics"]["efficiency"]["tokens"] == 150
     assert report["eval_panel"]["safety_gate"]["status"] in {"pass", "fail"}
     assert report["task_profile"]["primary"] in report["task_profile"]["labels"]

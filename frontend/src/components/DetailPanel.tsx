@@ -1091,6 +1091,18 @@ function TurnEvalReportCard({
     if (severity === 'low') return '低';
     return severity || '中';
   };
+  const assertionGroupLabel = (group: any) => ({
+    task_outcome: '任务结果',
+    execution_integrity: '执行完整性',
+    instruction_following: '指令遵循',
+    tool_use: '工具使用',
+    code_delivery: '代码交付',
+    research_grounding: '研究与证据',
+    planning_execution: '计划执行',
+    computer_use: 'GUI/浏览器操作',
+    gold_process: 'Gold 过程要求',
+    optional_judge: 'LLM 评审',
+  } as Record<string, string>)[String(group?.key || '')] || group?.label || group?.key;
   if (!isV3) {
     return (
       <Section title="评估">
@@ -1168,7 +1180,7 @@ function TurnEvalReportCard({
               <div className="dp-eval-group" key={group.key}>
                 <div className="dp-eval-group-head">
                   <div>
-                    <div className="dp-eval-list-title">{group.label}</div>
+                    <div className="dp-eval-list-title">{assertionGroupLabel(group)}</div>
                     <div className="dp-eval-dim-en">{group.key}</div>
                   </div>
                   <strong>{group.passed}/{group.total}</strong>
@@ -1267,6 +1279,7 @@ const CRITIC_EVIDENCE_DIMENSIONS: Array<{ key: string; label: string }> = [
   { key: 'tool_use', label: '工具使用' },
   { key: 'reasoning', label: '推理路径' },
   { key: 'instruction_following', label: '指令遵循' },
+  { key: 'workflow_adherence', label: '流程遵循' },
   { key: 'faithfulness', label: '忠实度' },
   { key: 'efficiency', label: '效率' },
   { key: 'reliability', label: '可靠性' },
@@ -1291,6 +1304,19 @@ function collectCriticEvidence(structured: any): Map<string, CriticEvidence[]> {
 
 function CriticClaimsCard({ claims }: { claims: any }) {
   if (!Array.isArray(claims) || !claims.length) return null;
+  const hasIndependentEvidence = (claim: any): boolean => {
+    const evidence = Array.isArray(claim?.evidence) ? claim.evidence : [];
+    return evidence.some((e: any) => {
+      const ref = String(e?.ref || '').toLowerCase();
+      const source = String(e?.source || '').toLowerCase();
+      if (!ref && !source) return false;
+      if (ref.startsWith('final_response') || source === 'final_response') return false;
+      if (ref.startsWith('claim:')) return false;
+      return true;
+    });
+  };
+  const displayClaims = claims.filter((c: any) => c?.verified === true || c?.verified === false || hasIndependentEvidence(c));
+  if (!displayClaims.length) return null;
   const verifiedLabel = (v: unknown): { label: string; tone: string } => {
     if (v === true) return { label: '已验证', tone: 'ok' };
     if (v === false) return { label: '反例', tone: 'fail' };
@@ -1305,9 +1331,9 @@ function CriticClaimsCard({ claims }: { claims: any }) {
   };
   return (
     <details className="dp-critic-claims" open>
-      <summary>Agent 声称核对（共 {claims.length} 条）</summary>
+      <summary>独立声称核验（共 {displayClaims.length} 条）</summary>
       <div className="dp-critic-claims-list">
-        {claims.slice(0, 12).map((c: any, idx: number) => {
+        {displayClaims.slice(0, 12).map((c: any, idx: number) => {
           const v = verifiedLabel(c?.verified);
           const evidence = Array.isArray(c?.evidence) ? c.evidence.filter((e: any) => e && (e.ref || e.quote)) : [];
           return (

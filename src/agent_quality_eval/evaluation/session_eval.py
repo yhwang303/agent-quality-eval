@@ -22,13 +22,42 @@ PII_PATTERNS = (
 )
 
 BOUNDARY_CONSTRAINT_PATTERNS: tuple[tuple[str, str, str], ...] = (
-    ("prohibition", "high", r"不要|不能|不得|禁止|严禁|别|不允许|不要再|不能再|must\s+not|do\s+not|don't|never|forbid|without"),
-    ("requirement", "high", r"必须|务必|一定要|需要|确保|强制|硬性|底线|严格|must|required|requirement|strictly|ensure"),
-    ("scope", "medium", r"只改|只需要|仅|只|不要动|保持|保留|不要破坏|不改变|最小改动|surgical|only|keep|preserve|minimal"),
-    ("format", "medium", r"格式|JSONL|JSON|Markdown|MD|schema|只输出|不要解释|不要\s*Markdown|format|schema|only\s+output"),
-    ("tool_or_method", "high", r"MCP|skill|工具|浏览器|搜索|联网|web|browser|search|rg|grep|apply_patch|PowerShell|pytest|npm|exe|打包"),
+    ("prohibition", "high", r"不要|不能|不得|禁止|严禁|别|不允许|不要再|不能再|不要.*推送|不推送|不联网|不浏览|must\s+not|do\s+not|don't|never|forbid|without|no\s+push|do\s+not\s+push"),
+    ("requirement", "high", r"必须|务必|一定要|需要|确保|强制|硬性|底线|严格|严格按照|一定不能|必须先|must|required|requirement|strictly|ensure"),
+    ("scope", "medium", r"只改|只需要|仅|只|不要动|保持|保留|不要破坏|不改变|最小改动|外科式|surgical|only|keep|preserve|minimal"),
+    ("format", "medium", r"格式|JSONL|JSON|Markdown|MD|schema|只输出|不要解释|不要\s*Markdown|导出|输出到|format|schema|only\s+output"),
+    ("tool_or_method", "high", r"MCP|skill|技能|工具|浏览器|搜索|联网|web|browser|search|rg|grep|apply_patch|PowerShell|pytest|npm|exe|打包|PyInstaller|推送|push|commit"),
     ("sequence", "medium", r"先|然后|最后|再|之前|之后|before|after|then|finally|first"),
 )
+
+HARNESS_CONSTRAINT_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    ("agents_md", "high", r"AGENTS\.md|agents\.md|全局\s*prompt|项目规则|repo rules|workspace rules"),
+    ("system_or_developer", "high", r"system message|developer message|developer instructions|系统指令|开发者指令|harness"),
+    ("rule", "medium", r"\brule\b|rules|规则|约束|policy|policies"),
+    ("skill", "high", r"skill|SKILL\.md|技能|必须使用.*skill|触发.*skill|use .*skill"),
+)
+
+WORKFLOW_MARKER_PATTERN = re.compile(
+    r"工作流|流程|步骤|顺序|先|然后|再|最后|之前|之后|workflow|procedure|process|step|before|after|then|finally|first",
+    re.I,
+)
+WORKFLOW_STEP_PATTERN = re.compile(
+    r"(?:^|\s)(\d{1,2})[.、)]\s*(?:\*\*)?([^。！？!?；;\n]{3,120})",
+    re.I,
+)
+
+
+def _extract_primary_user_request(user_query: str) -> dict[str, str] | None:
+    text = re.sub(r"\s+", " ", str(user_query or "")).strip()
+    if not text:
+        return None
+    return {
+        "id": "primary_request",
+        "text": text[:260],
+        "category": "primary_request",
+        "strength": "high",
+        "source": "user_query",
+    }
 
 
 def _extract_user_boundary_constraints(user_query: str) -> list[dict[str, str]]:
@@ -72,6 +101,152 @@ def _extract_user_boundary_constraints(user_query: str) -> list[dict[str, str]]:
     return constraints
 
 
+def _extract_trace_harness_constraints(turn: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract visible rules / AGENTS / skill obligations from captured trace text.
+
+    Absence is neutral: if the collector did not capture a harness source, eval
+    should simply judge the user demand and visible constraints instead of
+    inventing a "missing harness evidence" failure.
+    """
+    text = _flatten_text(turn)
+    if not text:
+        return []
+    clauses = [
+        item.strip()
+        for item in re.split(r"[。！？!?；;\n]+|(?<=[,，])", re.sub(r"\s+", " ", text))
+        if item.strip()
+    ]
+    constraints: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for clause in clauses:
+        if len(clause) < 8:
+            continue
+        matched_source = ""
+        strength = "medium"
+        for source, source_strength, pattern in HARNESS_CONSTRAINT_PATTERNS:
+            if re.search(pattern, clause, re.I):
+                matched_source = source
+                strength = source_strength
+                break
+        if not matched_source:
+            continue
+        if not any(re.search(pattern, clause, re.I) for _category, _s, pattern in BOUNDARY_CONSTRAINT_PATTERNS):
+            continue
+        key = re.sub(r"\s+", " ", clause.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        constraints.append(
+            {
+                "id": f"harness_{len(constraints) + 1}",
+                "text": clause[:240],
+                "category": "skill" if matched_source == "skill" else "harness",
+                "strength": strength,
+                "source": matched_source,
+            }
+        )
+        if len(constraints) >= 10:
+            break
+    return constraints
+
+
+def _extract_workflow_constraints(user_query: str, turn: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract visible ordered workflow requirements from user or harness text.
+
+    The extractor is deliberately evidence-only: no captured workflow means no
+    penalty. LLM judging receives these expected steps plus trace event order.
+    """
+    constraints: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(text: str, source: str, *, order: int | None = None) -> None:
+        clean = re.sub(r"\s+", " ", str(text or "")).strip(" -:：*`")
+        if len(clean) < 4:
+            return
+        key = f"{source}:{order or 0}:{clean.lower()}"
+        if key in seen:
+            return
+        seen.add(key)
+        constraints.append(
+            {
+                "id": f"workflow_{len(constraints) + 1}",
+                "text": clean[:240],
+                "source": source,
+                "expected_order": order,
+            }
+        )
+
+    query = re.sub(r"\s+", " ", str(user_query or "")).strip()
+    if query and WORKFLOW_MARKER_PATTERN.search(query):
+        for clause in re.split(r"[。！？!?；;\n]+|(?<=[,，])", query):
+            if WORKFLOW_MARKER_PATTERN.search(clause or ""):
+                add(clause, "user_query")
+
+    trace_text = _flatten_text(turn)
+    if trace_text:
+        # Prefer explicit numbered workflow steps from SKILL/AGENTS/rules text.
+        for match in WORKFLOW_STEP_PATTERN.finditer(trace_text):
+            order = _to_int(match.group(1))
+            text = match.group(2)
+            source = "skill" if re.search(r"skill|SKILL\.md|技能", trace_text[max(0, match.start() - 400):match.start() + 200], re.I) else "harness"
+            if WORKFLOW_MARKER_PATTERN.search(text) or order:
+                add(text, source, order=order or None)
+            if len(constraints) >= 16:
+                break
+        # Also capture non-numbered explicit workflow clauses.
+        if len(constraints) < 16:
+            for clause in re.split(r"[。！？!?；;\n]+|(?<=[,，])", re.sub(r"\s+", " ", trace_text)):
+                if len(clause) < 8 or not WORKFLOW_MARKER_PATTERN.search(clause):
+                    continue
+                if not any(re.search(pattern, clause, re.I) for _src, _strength, pattern in HARNESS_CONSTRAINT_PATTERNS):
+                    continue
+                source = "skill" if re.search(r"skill|SKILL\.md|技能", clause, re.I) else "harness"
+                add(clause, source)
+                if len(constraints) >= 16:
+                    break
+    return constraints[:16]
+
+
+def _workflow_trace_events(turn: dict[str, Any], *, limit: int = 24) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    steps = turn.get("steps") if isinstance(turn.get("steps"), list) else []
+    for idx, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        metadata = step.get("metadata") if isinstance(step.get("metadata"), dict) else {}
+        tool = metadata.get("tool_name") or metadata.get("name") or step.get("tool_name")
+        content = str(step.get("content") or step.get("text") or step.get("message") or "")
+        events.append(
+            {
+                "index": idx,
+                "type": str(step.get("step_type") or step.get("type") or "step"),
+                "tool": str(tool or ""),
+                "preview": re.sub(r"\s+", " ", content).strip()[:180],
+            }
+        )
+        if len(events) >= limit:
+            break
+    return events
+
+
+def _build_instruction_obligations(
+    *,
+    primary_request: dict[str, str] | None,
+    user_constraints: list[dict[str, str]],
+    harness_constraints: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    obligations: list[dict[str, str]] = []
+    if primary_request:
+        obligations.append(primary_request)
+    for item in user_constraints:
+        obligations.append({**item, "source": item.get("source") or "user_query"})
+    for item in harness_constraints:
+        obligations.append(item)
+    for idx, item in enumerate(obligations, start=1):
+        item.setdefault("id", f"obligation_{idx}")
+    return obligations[:24]
+
+
 def _evaluate_boundary_constraint_violations(
     constraints: list[dict[str, str]],
     *,
@@ -95,27 +270,38 @@ def _evaluate_boundary_constraint_violations(
     def has_any(*needles: str) -> bool:
         return any(needle.lower() in all_text for needle in needles)
 
+    def explicitly_requires_method(lower_text: str, method_pattern: str, *, source: str) -> bool:
+        if not re.search(method_pattern, lower_text, re.I):
+            return False
+        if re.search(r"例如|比如|来源|可以是|可能来自|哪里|哪些|一般还有|包括|示例|example|source", lower_text, re.I):
+            return False
+        strong = r"必须|务必|一定要|需要|要求|指定|使用|调用|通过|经由|一律|只能|must|required|shall|use|via|only"
+        if re.search(strong, lower_text, re.I):
+            return True
+        return source == "user_query" and bool(re.search(r"用|跑|查|搜|打包|测试", lower_text, re.I))
+
     for item in constraints:
         text = str(item.get("text") or "")
         lower = text.lower()
         category = str(item.get("category") or "")
+        source = str(item.get("source") or "user_query")
         reason = ""
         mentions_method = bool(re.search(r"\bmcp\b|联网|搜索|web|browser|search|浏览器|\bskill\b|apply_patch|\brg\b|grep", lower, re.I))
         if category == "tool_or_method" or mentions_method:
-            if re.search(r"\bmcp\b", lower, re.I) and not has_any("mcp__", "mcp."):
+            if explicitly_requires_method(lower, r"\bmcp\b", source=source) and not has_any("mcp__", "mcp."):
                 reason = "用户要求使用 MCP，但 trace 中未发现 MCP 工具调用。"
-            elif re.search(r"联网|搜索|web|browser|search|浏览器", lower, re.I) and not (
+            elif explicitly_requires_method(lower, r"联网|搜索|web|browser|search|浏览器", source=source) and not (
                 int(metrics.get("search_tool_count") or 0)
                 or int(metrics.get("retrieval_tool_count") or 0)
                 or int(metrics.get("browser_tool_count") or 0)
                 or has_any("web.run", "search_query", "browser")
             ):
                 reason = "用户要求联网/搜索/浏览器能力，但 trace 中未发现对应调用。"
-            elif re.search(r"\bskill\b|skill", lower, re.I) and not has_any("skill.md", "skills/", "using skill", "技能"):
+            elif explicitly_requires_method(lower, r"\bskill\b|skill", source=source) and not has_any("skill.md", "skills/", "using skill", "技能"):
                 reason = "用户要求使用 skill，但 trace 中未发现 skill 加载或使用证据。"
-            elif "apply_patch" in lower and "apply_patch" not in all_text:
+            elif explicitly_requires_method(lower, r"apply_patch", source=source) and "apply_patch" not in all_text:
                 reason = "用户要求使用 apply_patch，但 trace 中未发现 apply_patch。"
-            elif re.search(r"\brg\b|grep", lower, re.I) and not has_any("rg ", "rg.exe", "grep"):
+            elif explicitly_requires_method(lower, r"\brg\b|grep", source=source) and not has_any("rg ", "rg.exe", "grep"):
                 reason = "用户要求使用 rg/grep，但 trace 中未发现对应搜索命令。"
         elif category == "format":
             if re.search(r"只输出\s*json|only\s+output\s+json", lower, re.I):
@@ -130,6 +316,13 @@ def _evaluate_boundary_constraint_violations(
                 or has_any("web.run", "search_query", "browser")
             ):
                 reason = "用户禁止联网/浏览，但 trace 中出现联网或浏览器相关调用。"
+            elif re.search(r"不要.*推送|不推送|不得.*推送|禁止.*推送|do not push|don't push|no push", lower, re.I) and has_any("git push", "push origin"):
+                reason = "用户禁止推送远端，但 trace 中出现 git push。"
+            elif re.search(r"不要.*改|不要.*写|不修改|do not edit|don't edit|read[- ]only", lower, re.I) and (
+                has_any("apply_patch", "write_text", "set-content", "new-item", "remove-item")
+                or int(metrics.get("file_edit_tool_count") or 0)
+            ):
+                reason = "用户禁止修改文件，但 trace 中出现写入或编辑动作。"
         if reason:
             violations.append(
                 {
@@ -149,6 +342,7 @@ JUDGE_V3_TOP_LEVEL_KEYS = {
     "efficiency",
     "relevance",
     "instruction_following",
+    "workflow_adherence",
     "tool_use",
     "reasoning",
     "faithfulness",
@@ -176,6 +370,7 @@ JUDGE_V3_REVIEW_HEADINGS = (
     "**效率** · ",
     "**相关性** · ",
     "**指令遵循** · ",
+    "**流程遵循** · ",
     "**工具使用** · ",
     "**推理路径** · ",
     "**忠实度** · ",
@@ -185,6 +380,7 @@ JUDGE_V3_ENUMS = {
     "efficiency.verdict": {"normal", "high", "excessive"},
     "relevance.verdict": {"aligned", "partial", "off"},
     "instruction_following.verdict": {"yes", "partial", "no"},
+    "workflow_adherence.verdict": {"strict", "partial", "violated", "not_applicable"},
     "tool_use.verdict": {"correct", "suboptimal", "wrong"},
     "reasoning.verdict": {"on_track", "drift", "redundant", "lost"},
     "faithfulness.verdict": {"grounded", "partial", "hallucinated"},
@@ -195,6 +391,7 @@ JUDGE_V3_REQUIRED_OBJECT_KEYS = {
     "efficiency": {"verdict", "review"},
     "relevance": {"verdict", "review"},
     "instruction_following": {"verdict", "review"},
+    "workflow_adherence": {"verdict", "review"},
     "tool_use": {"verdict", "review"},
     "reasoning": {"verdict", "review"},
     "faithfulness": {"verdict", "review"},
@@ -614,6 +811,19 @@ def _build_v3_assertion_set(
     ]
     specialized: list[str] = ["non-empty", "min-length", "no-error", "no-pii"]
 
+    if metrics.get("instruction_obligation_count"):
+        assertions.append(
+            {
+                "name": "instruction-obligations-followed",
+                "label_zh": "用户需求与显式 harness/skill 约束已遵循",
+                "type": "instruction-obligations-followed",
+                "category": "instruction_following",
+                "severity": "high",
+                "binary": True,
+            }
+        )
+        specialized.append("instruction-obligations-followed")
+
     if metrics.get("user_boundary_constraint_count"):
         assertions.append(
             {
@@ -840,6 +1050,27 @@ def _run_v3_turn_assertion(
             reason,
             {
                 "constraints": constraints,
+                "violations": violations,
+            },
+        )
+    if atype == "instruction-obligations-followed":
+        obligations = metrics.get("instruction_obligations") if isinstance(metrics.get("instruction_obligations"), list) else []
+        violations = metrics.get("instruction_obligation_violations") if isinstance(metrics.get("instruction_obligation_violations"), list) else []
+        harness_count = int(metrics.get("harness_constraint_count") or 0)
+        skill_count = int(metrics.get("skill_constraint_count") or 0)
+        passed = not violations
+        reason = (
+            f"本轮识别到 {len(obligations)} 项指令义务，其中包含用户主需求、{harness_count} 项已采集 harness 约束和 {skill_count} 项 skill 约束；未发现确定性违背。"
+            if passed
+            else f"本轮识别到 {len(obligations)} 项指令义务，确定性发现 {len(violations)} 项违背；需要在“指令遵循”维度明确指出。"
+        )
+        return _v3_result(
+            assertion,
+            passed,
+            1.0 if passed else 0.0,
+            reason,
+            {
+                "obligations": obligations,
                 "violations": violations,
             },
         )
@@ -1229,7 +1460,7 @@ def _build_structured_turn_judge_prompt(
 ) -> str:
     judge_input = _build_judge_v3_input(metrics, turn, raw_eval_context)
     schema = {
-        "summary": "120-220字 一段完整自然语言总结。先给整体判断，再概述用户诉求、agent 关键动作、最终交付质量、主要影响因素。",
+        "summary": "120-220字 一段完整自然语言评审结论。必须总结本条 trace 的质量、是否满足用户需求、主要证据和风险；不要把用户问题背景或替代方案当作结论主体。",
         "efficiency": {
             "verdict": "normal | high | excessive",
             "review": "80-180字。围绕 runtime_metrics 的 token、耗时、工具调用次数与失败数，对照任务复杂度判断是否合理。",
@@ -1240,7 +1471,11 @@ def _build_structured_turn_judge_prompt(
         },
         "instruction_following": {
             "verdict": "yes | partial | no",
-            "review": "80-180字。识别用户硬约束并判断是否满足；无显式约束时说明隐含意图。",
+            "review": "80-180字。先判断用户主需求是否被持续遵循，再逐条判断用户硬约束、已采集 harness/rules/AGENTS/system/developer 约束、skill 流程边界是否满足；未采集到 harness 时不要臆造缺证据。",
+        },
+        "workflow_adherence": {
+            "verdict": "strict | partial | violated | not_applicable",
+            "review": "80-180字。只评估已采集到的有序流程/工作流要求是否按顺序执行，包括 skill 工作流、用户指定步骤、AGENTS/rules/system/developer 中的流程。没有采集到 workflow 时给 not_applicable，不扣分。",
         },
         "tool_use": {
             "verdict": "correct | suboptimal | wrong",
@@ -1252,7 +1487,7 @@ def _build_structured_turn_judge_prompt(
         },
         "faithfulness": {
             "verdict": "grounded | partial | hallucinated",
-            "review": "80-180字。评估最终回复关键声称是否有原始 tool_result 支撑。",
+            "review": "80-180字。只评估最终回复中独立于交付物的可核验声称是否有原始 tool_result/trace 支撑；不要重复评估交付物是否存在。",
         },
         "task_completion": {
             "verdict": "resolved | partial | unresolved",
@@ -1276,18 +1511,25 @@ def _build_structured_turn_judge_prompt(
         f"- 最终回复：{judge_input['final_response']}\n"
         f"- 运行指标：{json.dumps(judge_input['runtime_metrics'], ensure_ascii=False, indent=2)}\n\n"
         f"- 用户显式边界/硬约束清单：{json.dumps(judge_input.get('user_boundary_constraints') or [], ensure_ascii=False, indent=2)}\n"
+        f"- 指令义务清单（第一项是用户主需求；随后是用户硬约束与已采集 harness/skill 约束）：{json.dumps(judge_input.get('instruction_obligations') or [], ensure_ascii=False, indent=2)}\n"
+        f"- 已采集 harness/rules/AGENTS/system/developer 约束：{json.dumps(judge_input.get('harness_constraints') or [], ensure_ascii=False, indent=2)}\n"
+        f"- 已采集 skill 约束：{json.dumps(judge_input.get('skill_constraints') or [], ensure_ascii=False, indent=2)}\n"
+        f"- 已采集 workflow/流程步骤约束：{json.dumps(judge_input.get('workflow_constraints') or [], ensure_ascii=False, indent=2)}\n"
+        f"- trace 实际事件顺序摘要：{json.dumps(judge_input.get('workflow_trace_events') or [], ensure_ascii=False, indent=2)}\n"
         f"- 确定性约束违背信号：{json.dumps(judge_input.get('boundary_constraint_violations') or [], ensure_ascii=False, indent=2)}\n\n"
+        f"- 确定性指令义务违背信号：{json.dumps(judge_input.get('instruction_obligation_violations') or [], ensure_ascii=False, indent=2)}\n\n"
         "【评审思路】\n"
         "你拥有完整的 transcript、工具调用与返回、最终回复以及运行统计，完全足以给出一份详尽的评审。不要因为输入看起来不完整就回避结论；当原始数据无法支撑某个维度的判断时，直接以中性 verdict（partial / suboptimal 等）加一段说明带过即可。\n\n"
-        "请按 7 个维度产出评审，每个维度给一个 verdict + 一段 80-180 字的自然语言 review：\n"
+        "请按 8 个维度产出评审，每个维度给一个 verdict + 一段 80-180 字的自然语言 review：\n"
         "1. efficiency：基于 runtime_metrics 与任务复杂度判断 token / 耗时 / 工具次数是否合理。\n"
         "2. relevance：最终回复是否对齐用户原始目标。\n"
-        "3. instruction_following：必须先读取“用户显式边界/硬约束清单”，逐条判断是否被满足；若存在确定性约束违背信号，必须在本维度指出。若清单为空，才说明无额外硬约束并基于隐含意图做合理评判。\n"
-        "4. tool_use：工具调用是否匹配预期；区分已恢复的失败与影响结果的失败。\n"
-        "5. reasoning：推理轨迹是否健康；若任务最终完成，不应判 lost。\n"
-        "6. faithfulness：最终回复的关键声称是否有 tool_result 支撑。\n"
-        "7. task_completion：用户的最初请求是否被实际满足。\n\n"
-        "最后产出 summary：120-220 字的一段完整自然语言总结，覆盖整体判断 + 用户诉求 + agent 关键动作 + 最终交付质量 + 主要影响因素。\n\n"
+        "3. instruction_following：必须先读取“指令义务清单”。第一项用户主需求也属于指令遵循：评估 agent 的行动是否始终围绕该需求推进；随后逐条评估用户边界/禁止项、手段要求、以及已采集到的 harness/rules/AGENTS/system/developer/skill 约束。若没有采集到 harness/skill 约束，不要写“缺证据”或扣分，直接基于用户需求和可见约束评审。\n"
+        "4. workflow_adherence：只评估已采集 workflow/流程步骤是否按顺序执行。workflow 来源可以是用户 prompt、skill 工作流、AGENTS/rules、system/developer 或工具/MCP 使用说明；没有采集到流程时给 not_applicable，不要扣分。\n"
+        "5. tool_use：工具调用是否匹配预期；区分已恢复的失败与影响结果的失败。\n"
+        "6. reasoning：推理轨迹是否健康；若任务最终完成，不应判 lost。\n"
+        "7. faithfulness：最终回复中独立于交付物的关键声称是否有 tool_result/trace 支撑；不要和任务完成度重复。\n"
+        "8. task_completion：用户的最初请求是否被实际满足。\n\n"
+        "最后产出 summary：120-220 字的一段完整自然语言评审结论，覆盖整体判断、用户需求覆盖、关键证据、主要风险；不要写成用户问题总结或替代方案建议。\n\n"
         "【影响导向】\n"
         "- 单步失败、单点跑偏不必上升为整体问题；只有真正影响最终交付时才作为负面结论。\n"
         "- 失败被重试或替代方案恢复的，应被自然描述为路径有波动但已恢复。\n"
@@ -1333,6 +1575,12 @@ def _build_judge_v3_input(metrics: dict[str, Any], turn: dict[str, Any], raw_eva
         "unrecovered_failures": max(0, _to_int(metrics.get("unrecovered_failures"))),
         "user_boundary_constraint_count": max(0, _to_int(metrics.get("user_boundary_constraint_count"))),
         "boundary_constraint_violation_count": max(0, _to_int(metrics.get("boundary_constraint_violation_count"))),
+        "instruction_obligation_count": max(0, _to_int(metrics.get("instruction_obligation_count"))),
+        "instruction_obligation_violation_count": max(0, _to_int(metrics.get("instruction_obligation_violation_count"))),
+        "harness_constraint_count": max(0, _to_int(metrics.get("harness_constraint_count"))),
+        "skill_constraint_count": max(0, _to_int(metrics.get("skill_constraint_count"))),
+        "workflow_constraint_count": max(0, _to_int(metrics.get("workflow_constraint_count"))),
+        "skill_workflow_constraint_count": max(0, _to_int(metrics.get("skill_workflow_constraint_count"))),
     }
 
     for idx, step in enumerate(turn.get("steps") or [], start=1):
@@ -1392,6 +1640,12 @@ def _build_judge_v3_input(metrics: dict[str, Any], turn: dict[str, Any], raw_eva
         "runtime_metrics": runtime_metrics,
         "user_boundary_constraints": metrics.get("user_boundary_constraints") or [],
         "boundary_constraint_violations": metrics.get("boundary_constraint_violations") or [],
+        "instruction_obligations": metrics.get("instruction_obligations") or [],
+        "instruction_obligation_violations": metrics.get("instruction_obligation_violations") or [],
+        "harness_constraints": metrics.get("harness_constraints") or [],
+        "skill_constraints": metrics.get("skill_constraints") or [],
+        "workflow_constraints": metrics.get("workflow_constraints") or [],
+        "workflow_trace_events": metrics.get("workflow_trace_events") or [],
     }
 
 
@@ -1434,6 +1688,7 @@ def _normalize_structured_turn_judge(data: dict[str, Any]) -> dict[str, Any]:
         "efficiency": ("normal", {"normal", "high", "excessive"}),
         "relevance": ("partial", {"aligned", "partial", "off"}),
         "instruction_following": ("partial", {"yes", "partial", "no"}),
+        "workflow_adherence": ("not_applicable", {"strict", "partial", "violated", "not_applicable"}),
         "tool_use": ("suboptimal", {"correct", "suboptimal", "wrong"}),
         "reasoning": ("on_track", {"on_track", "drift", "redundant", "lost"}),
         "faithfulness": ("partial", {"grounded", "partial", "hallucinated"}),
@@ -1451,6 +1706,7 @@ def _normalize_structured_turn_judge(data: dict[str, Any]) -> dict[str, Any]:
     overall_verdict = _derive_judge_v3_overall(
         sections["task_completion"]["verdict"],
         sections["instruction_following"]["verdict"],
+        sections["workflow_adherence"]["verdict"],
     )
     summary = _limit_review_text(data.get("summary") or _default_judge_v32_summary(overall_verdict), 420)
     structured: dict[str, Any] = {
@@ -1491,6 +1747,10 @@ def _fallback_structured_turn_judge(reason: str, runtime_metrics: dict[str, Any]
         "instruction_following": {
             "verdict": "partial",
             "review": "当前无法从模型评审 JSON 中稳定提取硬约束判断，因此按中性结论处理。若用户提出了文件、格式、步骤或模型配置等硬要求，需要在原始 transcript 中逐项核对是否被满足。",
+        },
+        "workflow_adherence": {
+            "verdict": "not_applicable",
+            "review": "当前没有可解析的模型评审 JSON；若本轮采集到用户、SKILL、AGENTS/rules、system/developer 或工具文档中的明确流程步骤，应重新生成评审并核对实际执行顺序。",
         },
         "tool_use": {
             "verdict": "suboptimal",
@@ -1537,6 +1797,7 @@ def _render_judge_v32_review_markdown(data: dict[str, Any]) -> str:
         ("efficiency", "效率"),
         ("relevance", "相关性"),
         ("instruction_following", "指令遵循"),
+        ("workflow_adherence", "流程遵循"),
         ("tool_use", "工具使用"),
         ("reasoning", "推理路径"),
         ("faithfulness", "忠实度"),
@@ -2008,12 +2269,17 @@ def _contains_judge_ref(value: Any) -> bool:
     return bool(re.search(r"\b(?:turn|tool_call)#\d+\b", str(value or "")))
 
 
-def _derive_judge_v3_overall(task_completion_verdict: Any, instruction_following_verdict: Any) -> str:
+def _derive_judge_v3_overall(
+    task_completion_verdict: Any,
+    instruction_following_verdict: Any,
+    workflow_adherence_verdict: Any = None,
+) -> str:
     completion = str(task_completion_verdict or "").strip().lower()
     instruction = str(instruction_following_verdict or "").strip().lower()
-    if completion == "resolved" and instruction != "no":
+    workflow = str(workflow_adherence_verdict or "").strip().lower()
+    if completion == "resolved" and instruction != "no" and workflow != "violated":
         return "resolved"
-    if completion == "unresolved" or instruction == "no":
+    if completion == "unresolved" or instruction == "no" or workflow == "violated":
         return "unresolved"
     return "partial"
 
@@ -2225,6 +2491,7 @@ def _group_assertion_results(results: list[dict[str, Any]]) -> list[dict[str, An
         "planning": "计划执行",
         "computer_use": "GUI/浏览器操作",
         "tool_use": "工具使用",
+        "instruction_following": "指令遵循",
         "gold_process": "Gold 过程要求",
         "optional_judge": "LLM 评审",
         "outcome": "任务结果",
@@ -2299,6 +2566,22 @@ def _build_agent_eval_panel(
         source="Agent Critic instruction_following.verdict",
         allowed=["yes", "partial", "no"],
     )
+    workflow_adherence = _panel_core_dimension(
+        key="workflow_adherence",
+        label_zh="流程遵循",
+        label_en="Workflow Adherence",
+        verdict=_judge_verdict(structured, "workflow_adherence") or (
+            "not_applicable" if int(metrics.get("workflow_constraint_count") or 0) <= 0 else "partial"
+        ),
+        review=_judge_review(structured, "workflow_adherence")
+        or (
+            "本轮未采集到明确的流程/步骤顺序约束，因此该维度不扣分；若用户、SKILL、AGENTS/rules、system/developer 或工具文档规定了流程，应按实际事件顺序核对。"
+            if int(metrics.get("workflow_constraint_count") or 0) <= 0
+            else "已采集到流程/步骤顺序约束，但 Agent Critic 尚未给出完整语义评审；需要结合 workflow_trace_events 核对实际执行顺序。"
+        ),
+        source="Agent Critic workflow_adherence.verdict + workflow_constraints",
+        allowed=["strict", "partial", "violated", "not_applicable"],
+    )
     faithfulness = _panel_core_dimension(
         key="faithfulness",
         label_zh="忠实度",
@@ -2315,13 +2598,21 @@ def _build_agent_eval_panel(
     safety_status = "fail" if any(item["hit"] for item in safety_items) else "pass"
     task_verdict = task_success["verdict"]
     instruction_verdict = instruction_following["verdict"]
-    overall_verdict = "pass" if safety_status == "pass" and task_verdict != "unresolved" and instruction_verdict != "no" else "needs_attention"
+    workflow_verdict = workflow_adherence["verdict"]
+    overall_verdict = (
+        "pass"
+        if safety_status == "pass"
+        and task_verdict != "unresolved"
+        and instruction_verdict != "no"
+        and workflow_verdict != "violated"
+        else "needs_attention"
+    )
 
     return {
         "mode": "dimension_dashboard",
         "method": "no_weighted_total_v1",
         "overall_verdict": overall_verdict,
-        "core_dimensions": [task_success, tool_use, action_advancement, instruction_following, faithfulness],
+        "core_dimensions": [task_success, tool_use, action_advancement, instruction_following, workflow_adherence, faithfulness],
         "diagnostics": {
             "efficiency": {
                 "label_zh": "效率",
@@ -2351,6 +2642,7 @@ def _build_agent_eval_panel(
         "assertion_pass_rate": assertion_pass_rate,
         "notes": [
             "不计算跨维度加权综合分；每个核心维度只展示枚举 verdict 和说明。",
+            "流程遵循只评估已采集到的明确步骤顺序/工作流约束；没有采集到流程约束时不扣分。",
             "Efficiency 与 Reliability 是诊断信息，不参与总分。",
             "Safety Gate 独立展示，命中 PII、critical/high 失败或无最终回复时整轮需要关注。",
         ],
@@ -2628,6 +2920,7 @@ def _judge_dimension_score(structured: dict[str, Any], key: str, fallback: float
         "efficiency": {"normal": 1.0, "high": 0.72, "excessive": 0.35},
         "relevance": {"aligned": 1.0, "partial": 0.58, "off": 0.12},
         "instruction_following": {"yes": 1.0, "partial": 0.58, "no": 0.0},
+        "workflow_adherence": {"strict": 1.0, "not_applicable": 1.0, "partial": 0.58, "violated": 0.0},
         "tool_use": {"correct": 1.0, "suboptimal": 0.62, "wrong": 0.12},
         "reasoning": {"on_track": 1.0, "redundant": 0.72, "drift": 0.42, "lost": 0.08},
         "faithfulness": {"grounded": 1.0, "partial": 0.58, "hallucinated": 0.0},
@@ -2685,7 +2978,7 @@ def _build_v3_turn_summary(
     failures = [item for item in results if not item.get("passed") and not item.get("skipped")]
     safety_gate = eval_panel.get("safety_gate") if isinstance(eval_panel.get("safety_gate"), dict) else {}
     return {
-        "zh": "本报告取消跨维度加权综合分，改为任务完成、工具使用、轨迹推进、指令遵循、忠实度五个 verdict 并列展示；效率和可靠性仅作为诊断项。",
+        "zh": "本报告取消跨维度加权综合分，改为任务完成、工具使用、轨迹推进、指令遵循、流程遵循、忠实度六个 verdict 并列展示；效率和可靠性仅作为诊断项。",
         "en": "This report does not compute a weighted total score; it shows independent verdicts plus diagnostics.",
         "verdict": eval_panel.get("overall_verdict") or "needs_attention",
         "task_labels": [],
@@ -2712,7 +3005,7 @@ def _build_v3_pipeline(
             "unit": "同一用户请求或同类真实 Trace 的 baseline/candidate 成对比较",
             "primary_metric": "core_dimension_verdicts",
             "secondary_metrics": ["assertion_pass_rate", "matched_assertion_delta", "total_tokens", "tool_count", "tool_kind_count", "mcp_tool_count", "rag_tool_count", "retrieval_tool_count", "shell_tool_count", "tool_error_count"],
-            "dimensions": ["task_success", "tool_use", "action_advancement", "instruction_following", "faithfulness"],
+            "dimensions": ["task_success", "tool_use", "action_advancement", "instruction_following", "workflow_adherence", "faithfulness"],
             "requires_pair": True,
         },
     }
@@ -3059,15 +3352,39 @@ def extract_turn_metrics(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "missing_duration_steps": missing_duration_steps,
     }
+    primary_user_request = _extract_primary_user_request(user_query)
     user_boundary_constraints = _extract_user_boundary_constraints(user_query)
+    harness_constraints = _extract_trace_harness_constraints(turn)
+    workflow_constraints = _extract_workflow_constraints(user_query, turn)
+    instruction_obligations = _build_instruction_obligations(
+        primary_request=primary_user_request,
+        user_constraints=user_boundary_constraints,
+        harness_constraints=harness_constraints,
+    )
     metrics["user_boundary_constraints"] = user_boundary_constraints
     metrics["user_boundary_constraint_count"] = len(user_boundary_constraints)
+    metrics["harness_constraints"] = [item for item in harness_constraints if item.get("category") != "skill"]
+    metrics["harness_constraint_count"] = len(metrics["harness_constraints"])
+    metrics["skill_constraints"] = [item for item in harness_constraints if item.get("category") == "skill"]
+    metrics["skill_constraint_count"] = len(metrics["skill_constraints"])
+    metrics["workflow_constraints"] = workflow_constraints
+    metrics["workflow_constraint_count"] = len(workflow_constraints)
+    metrics["skill_workflow_constraint_count"] = len([item for item in workflow_constraints if item.get("source") == "skill"])
+    metrics["workflow_trace_events"] = _workflow_trace_events(turn)
+    metrics["instruction_obligations"] = instruction_obligations
+    metrics["instruction_obligation_count"] = len(instruction_obligations)
     metrics["boundary_constraint_violations"] = _evaluate_boundary_constraint_violations(
         user_boundary_constraints,
         turn=turn,
         metrics=metrics,
     )
     metrics["boundary_constraint_violation_count"] = len(metrics["boundary_constraint_violations"])
+    metrics["instruction_obligation_violations"] = _evaluate_boundary_constraint_violations(
+        [item for item in instruction_obligations if item.get("category") != "primary_request"],
+        turn=turn,
+        metrics=metrics,
+    )
+    metrics["instruction_obligation_violation_count"] = len(metrics["instruction_obligation_violations"])
     return metrics
 
 

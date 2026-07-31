@@ -8,6 +8,7 @@ from agent_quality_eval.evaluation.api import (
     _REGRESSION_LLM_COMPARE_CACHE,
     _build_or_load_turn_eval,
     _compare_turn_reports,
+    _normalize_ab_llm_compare,
     _record_compare_eval_event,
 )
 from agent_quality_eval.evaluation.models import PerformanceMetrics, ProviderResponse
@@ -124,7 +125,7 @@ def _completed_json() -> str:
         "summary_conclusion": "结论：候选 trace 在任务完成和可靠性上更好。",
         "user_request_coverage": "候选更完整覆盖用户对 A/B 报告的诉求，Base 只完成了部分断言。",
     }
-    for key in ("task_completion", "tool_use", "reasoning", "instruction_following", "faithfulness", "efficiency", "reliability"):
+    for key in eval_api.AB_COMPARE_DIMENSIONS:
         data[key] = {"verdict": "candidate_stronger", "winner": "candidate", "review": f"候选在 {key} 上更稳定。"}
     return json.dumps(data, ensure_ascii=False)
 
@@ -151,10 +152,28 @@ def test_turn_compare_includes_completed_llm_compare(monkeypatch):
     assert result["baseline"]["trace_meta"]["timeline_signature"]["count"] == 3
     assert result["llm_compare"]["status"] == "completed"
     assert result["llm_compare"]["comparison_verdict"] == "candidate_better"
-    assert set(("task_completion", "tool_use", "reasoning", "instruction_following", "faithfulness", "efficiency", "reliability")) <= set(result["llm_compare"])
+    assert set(eval_api.AB_COMPARE_DIMENSIONS) <= set(result["llm_compare"])
     assert result["llm_compare"]["cache_hit"] is False
     assert "hook_subagent_eval_report" in provider.calls[0]
     assert "必须突出差异" in provider.calls[0]
+
+
+def test_ab_compare_overall_verdict_aligns_with_dimension_majority():
+    payload: dict[str, Any] = {
+        "comparison_verdict": "mixed",
+        "summary_conclusion": "结论：Base 在多数维度更强。",
+        "user_request_coverage": "Base 覆盖更完整。",
+    }
+    for key in ("task_completion", "tool_use", "reasoning", "instruction_following", "workflow_adherence", "faithfulness"):
+        payload[key] = {"verdict": "weaker", "winner": "baseline", "review": f"Base 在 {key} 更强。"}
+    for key in ("efficiency", "reliability"):
+        payload[key] = {"verdict": "comparable", "winner": "tie", "review": f"{key} 持平。"}
+
+    normalized = eval_api._align_ab_compare_overall_verdict(_normalize_ab_llm_compare(payload))
+
+    assert normalized["comparison_verdict"] == "baseline_better"
+    assert normalized["dimension_winner_counts"]["baseline"] == 6
+    assert "系统校准" in normalized["summary_conclusion"]
 
 
 def test_turn_compare_reuses_completed_llm_compare_for_same_pair(monkeypatch):
@@ -327,7 +346,7 @@ def test_turn_compare_blind_verdict_infers_real_winner(monkeypatch):
         "summary_conclusion": "结论：Side B 整体更优。",
         "user_request_coverage": "Side B 对用户诉求覆盖更好。",
     }
-    for key in ("task_completion", "tool_use", "reasoning", "instruction_following", "faithfulness", "efficiency", "reliability"):
+    for key in eval_api.AB_COMPARE_DIMENSIONS:
         data[key] = {"verdict": "stronger", "winner": "unclear", "review": f"Side B 在 {key} 上更好。"}
 
     provider = _Provider(json.dumps(data, ensure_ascii=False))
@@ -358,7 +377,7 @@ def test_turn_compare_winner_overrides_conflicting_verdict(monkeypatch):
         "summary_conclusion": "结论：Base 在推理路径和效率上更强。",
         "user_request_coverage": "Base 和候选均覆盖核心诉求。",
     }
-    for key in ("task_completion", "tool_use", "reasoning", "instruction_following", "faithfulness", "efficiency", "reliability"):
+    for key in eval_api.AB_COMPARE_DIMENSIONS:
         data[key] = {"verdict": "stronger", "winner": "baseline", "review": f"Base 在 {key} 上更强。"}
     provider = _Provider(json.dumps(data, ensure_ascii=False))
     monkeypatch.setattr(settings, "load_critic_settings", lambda: _Settings())
@@ -452,14 +471,7 @@ def _regression_completed_json(verdict: str = "PASS") -> str:
         "new_regressions": [] if verdict == "PASS" else ["New candidate regression."],
         "manual_review_notes": ["复核断言差异。"],
     }
-    for key in (
-        "capability_preservation",
-        "user_goal_coverage",
-        "behavioral_change_risk",
-        "evidence_faithfulness",
-        "workflow_integrity",
-        "efficiency_regression",
-    ):
+    for key in eval_api.REGRESSION_DIMENSIONS:
         data[key] = {
             "verdict": "preserved",
             "review": f"{key} is supported by distinct eval evidence for this regression gate.",

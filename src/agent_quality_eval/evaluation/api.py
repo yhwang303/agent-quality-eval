@@ -1132,6 +1132,7 @@ AB_COMPARE_DIMENSIONS = (
     "tool_use",
     "reasoning",
     "instruction_following",
+    "workflow_adherence",
     "faithfulness",
     "efficiency",
     "reliability",
@@ -1142,6 +1143,7 @@ AB_COMPARE_DIMENSION_LABELS = {
     "tool_use": "工具使用",
     "reasoning": "推理路径",
     "instruction_following": "指令遵循",
+    "workflow_adherence": "流程遵循",
     "faithfulness": "忠实度",
     "efficiency": "效率",
     "reliability": "可靠性",
@@ -1151,7 +1153,13 @@ AB_COMPARE_REF_WHITELIST: dict[str, tuple[str, ...]] = {
     "task_completion": ("final_response", "assertion:", "file:", "artifact:"),
     "tool_use": ("tool_choice:", "metrics:tool_kind_count", "metrics:tool_count"),
     "reasoning": ("step:strategy_shift", "step:plan_update", "step:thinking", "metrics:strategy_shifts"),
-    "instruction_following": ("user_query:",),
+    "instruction_following": (
+        "user_query:", "harness:", "skill:", "final_response:", "assertion:", "step:", "tool_call:", "metrics:tool_count",
+    ),
+    "workflow_adherence": (
+        "workflow:", "skill:workflow", "harness:workflow", "user_query:workflow", "step:", "tool_call:",
+        "metrics:workflow_constraint_count",
+    ),
     "faithfulness": ("claim:", "tool_call", "final_response:无独立声称"),
     "efficiency": (
         "metrics:total_tokens", "metrics:input_tokens", "metrics:output_tokens", "metrics:duration_ms",
@@ -1178,13 +1186,21 @@ AB_COMPARE_DIMENSION_ALIASES = {
         "instructions",
         "指令遵循",
     ),
+    "workflow_adherence": (
+        "workflow_adherence",
+        "workflow_compliance",
+        "process_adherence",
+        "process_compliance",
+        "流程遵循",
+        "工作流遵循",
+    ),
     "faithfulness": ("faithfulness", "fidelity", "groundedness", "factuality", "忠实度", "事实忠实"),
     "efficiency": ("efficiency", "cost_efficiency", "latency_efficiency", "效率"),
     "reliability": ("reliability", "robustness", "stability", "可靠性", "稳定性"),
 }
-_AB_COMPARE_NORMALIZER_VERSION = "ab-llm-eval-report-compare-v13-structured-efficiency-reliability"
+_AB_COMPARE_NORMALIZER_VERSION = "ab-llm-eval-report-compare-v15-workflow-adherence"
 _AB_LLM_COMPARE_CACHE: dict[str, dict[str, Any]] = {}
-_REGRESSION_NORMALIZER_VERSION = "regression-gate-trace-compare-v10-structured-efficiency-reliability"
+_REGRESSION_NORMALIZER_VERSION = "regression-gate-trace-compare-v11-workflow-adherence"
 _REGRESSION_LLM_COMPARE_CACHE: dict[str, dict[str, Any]] = {}
 
 
@@ -1420,6 +1436,8 @@ def _compare_trace_meta(report: dict[str, Any], context: dict[str, Any] | None =
             "failed_assertions": failed_assertions,
             "overall_verdict": eval_panel.get("overall_verdict"),
             "assertion_pass_rate": report.get("assertion_pass_rate"),
+            "instruction_obligation_count": metrics.get("instruction_obligation_count"),
+            "instruction_obligation_violation_count": metrics.get("instruction_obligation_violation_count"),
         },
         "provider": judge.get("provider"),
         "model": judge.get("model"),
@@ -1509,11 +1527,11 @@ def _build_ab_compare_prompt(compare_input: dict[str, Any], *, blind: bool = Fal
     if blind:
         winner_enum = "side_a | side_b | tie | unclear"
         verdict_enum = "side_a_better | side_b_better | mixed | no_material_difference"
-        review_template = "140-260字自然语言段落。围绕“{label}”对比两侧：先说清哪一侧更好或谁更差、差在哪；再给出依据（trace/tool_result/断言/token/耗时中的具体信号），必要时可指出可比性风险。tool_use / efficiency / reliability 三个维度必须严格互斥：tool_use 只写工具选型是否恰当，efficiency 只写资源消耗数字，reliability 只写未恢复的失败与稳定性；不允许在这三个维度里写同一句“工具调用失败率高”。"
+        review_template = "140-260字自然语言段落。围绕“{label}”对比两侧：先说清哪一侧更好或谁更差、差在哪；再给出依据（trace/tool_result/断言/token/耗时中的具体信号），必要时可指出可比性风险。tool_use / workflow_adherence / efficiency / reliability 必须严格互斥：tool_use 只写工具选型，workflow_adherence 只写规定流程顺序，efficiency 只写资源消耗数字，reliability 只写未恢复失败与稳定性。"
         markdown_hint = (
-            "面向前端展示的 Markdown。只包含以下 8 个固定部分："
+            "面向前端展示的 Markdown。只包含以下 9 个固定部分："
             "**用户诉求覆盖情况**、**任务完成**、**工具使用**、**推理路径**、"
-            "**指令遵循**、**忠实度**、**效率**、**可靠性**。每个部分都必须是对比表述。"
+            "**指令遵循**、**流程遵循**、**忠实度**、**效率**、**可靠性**。每个部分都必须是对比表述。"
         )
         intro = (
             "你是 LLM A/B 盲审分析器。输入只标注为 Side A 与 Side B，不要尝试推断哪边来自旧版本或新版本，"
@@ -1527,11 +1545,11 @@ def _build_ab_compare_prompt(compare_input: dict[str, Any], *, blind: bool = Fal
     else:
         winner_enum = "baseline | candidate | tie | unclear"
         verdict_enum = "candidate_better | baseline_better | mixed | no_material_difference"
-        review_template = "140-260字自然语言段落。围绕“{label}”对比 Base 与候选：先说清哪一侧更好或谁更差、差在哪；再给出依据（trace/tool_result/断言/token/耗时中的具体信号），必要时可指出可比性风险。tool_use / efficiency / reliability 三个维度必须严格互斥：tool_use 只写工具选型是否恰当，efficiency 只写资源消耗数字，reliability 只写未恢复的失败与稳定性；不允许在这三个维度里写同一句“工具调用失败率高”。"
+        review_template = "140-260字自然语言段落。围绕“{label}”对比 Base 与候选：先说清哪一侧更好或谁更差、差在哪；再给出依据（trace/tool_result/断言/token/耗时中的具体信号），必要时可指出可比性风险。tool_use / workflow_adherence / efficiency / reliability 必须严格互斥：tool_use 只写工具选型，workflow_adherence 只写规定流程顺序，efficiency 只写资源消耗数字，reliability 只写未恢复失败与稳定性。"
         markdown_hint = (
-            "面向前端展示的 Markdown。只包含以下 8 个固定部分："
+            "面向前端展示的 Markdown。只包含以下 9 个固定部分："
             "**用户诉求覆盖情况**、**任务完成**、**工具使用**、**推理路径**、"
-            "**指令遵循**、**忠实度**、**效率**、**可靠性**。每个部分都必须是对比表述。"
+            "**指令遵循**、**流程遵循**、**忠实度**、**效率**、**可靠性**。每个部分都必须是对比表述。"
         )
         intro = (
             "你是 LLM A/B 对比分析器。你的任务是读取两份已经由 hook subagent judge 产出的 eval report，并输出 Base 与候选的对比报告。\n"
@@ -1542,7 +1560,7 @@ def _build_ab_compare_prompt(compare_input: dict[str, Any], *, blind: bool = Fal
         side_b_evidence_label = "candidate_evidence"
     schema = {
         "comparison_verdict": verdict_enum,
-        "summary_conclusion": "必须以“结论：”开头的一段自然语言。要点：谁更好、为什么、主要证据类型（断言/工具/token/耗时）、主要风险。",
+        "summary_conclusion": "必须以“结论：”开头的一段 180-300 字自然语言。要点：谁更好、为什么、主要证据类型（断言/工具/token/耗时/流程）、主要风险；总体 verdict 必须与所有分维度 winner 的多数方向一致，只有维度真实分裂时才写 mixed/各有优劣。",
         "user_request_coverage": coverage_hint,
     }
     for key, label in AB_COMPARE_DIMENSION_LABELS.items():
@@ -1567,25 +1585,28 @@ def _build_ab_compare_prompt(compare_input: dict[str, Any], *, blind: bool = Fal
         "如果某个能力开关、工具、MCP 或策略只在一侧出现，要分析它如何影响推理路径、工具使用、指令遵循、效率和可靠性；不要硬编码任何具体案例。\n"
         "如果两条 trace 的用户请求不同，要明确指出可比性风险，但仍基于两份 eval report 给出当前证据下的对比结论。\n"
         "【verdict / winner 语义一致性】review 里说了“某侧更差/更好”就必须给出对应的 verdict（stronger 或 weaker）与 winner，不允许写“不明确/unclear”兜底。只有确实旗鼓相当且 review 明确表达“持平”时才允许 comparable + tie。\n"
+        f"【总体结论一致性】comparison_verdict 必须跟 {len(AB_COMPARE_DIMENSIONS)} 个维度 winner 的多数方向一致：Base 胜出维度更多就写 baseline_better，候选胜出维度更多就写 candidate_better；只有胜负维度真正接近或互相冲突时才写 mixed，各维度都持平时才写 no_material_difference。\n"
         "【每维度必须给出证据】每个维度的 " + side_a_evidence_label + " 与 " + side_b_evidence_label + " 数组各至少 1 条，最多 4 条。\n"
-        "【七维度语义边界——严格互斥，禁止重叠】\n"
+        "【八维度语义边界——严格互斥，禁止重叠】\n"
         "  * task_completion 只回答“**最终交付物是否满足用户可验收标准**”——看的是最终产物本身。\n"
         "  * tool_use 只回答“**工具选型是否正确**”——选对工具了吗、参数对吗、组合合理吗、是否错用非最优工具。**与失败次数无关**。\n"
         "  * reasoning 只回答“**推理路径是否直、有无绕路**”——看 strategy_shift、重复检索、绕路痕迹。\n"
-        "  * instruction_following 只回答“**用户显式指令是否被遵守**”——看 user_query 的约束点是否落地，包括边界/禁止项，也包括用户点名要用的手段/工具/MCP/skill（哪怕没指名具体是哪个）。\n"
+        "  * instruction_following 只回答“**用户需求、显式约束与已采集 harness/skill 是否被遵守**”——先看主需求是否被行动路径持续覆盖，再看 user_query 的边界/禁止项、点名手段/工具/MCP/skill，以及 trace 已采集到的 rules/AGENTS/system/developer/SKILL 流程。没有采集到 harness/skill 时不要扣分。\n"
+        "  * workflow_adherence 只回答“**明确规定的流程/步骤顺序是否被遵守**”——来源包括用户 prompt、SKILL.md 工作流、AGENTS.md/rules、system/developer、工具/MCP 文档或 gold process。没有采集到 workflow_constraints 时两侧 tie/not_applicable，不扣分；不要把普通禁止项或失败恢复写到这里。\n"
         "  * faithfulness 只回答“**agent 说过的话是否有 tool_result 或文件证据支持**”——判断对象是话不是物，**不包括交付物本身是否存在**（那是 task_completion）；必须成对：一个 claim + 支持它的 tool_result。\n"
         "  * efficiency 只回答“**用了多少资源**”——只看 tokens、耗时、步骤、重复调用；**必须明确对比两侧的耗时（分钟，不允许用秒或毫秒）**，不能只谈 token；**完全不看失败率**。"
         "**耗时数字必须直接使用 metrics 中已经算好的 duration_min 字段，禁止自己拿 duration_ms 换算（历史上模型换算出错，把秒当分钟写）**。\n"
         "  * reliability 只回答“**遇到问题时过程是否稳健、结果是否受影响**”——**不是简单数一数工具调用失败次数**，必须依次覆盖三个子方面（缺一不可）：①**失败恢复能力**——失败后是否被恢复（恢复了就不算不可靠的证据，只有**未恢复**的失败才算）；②**边界情况处理**——两侧是否有意识地处理了输入缺失/异常参数/极端场景等边界条件，而不是只走 happy path；③**状态是否一致**——两侧多次操作/重试之间状态有没有出现自相矛盾、重复副作用或数据不一致。"
         "**判定铁律**：出现失败但全部被自行恢复、且未影响最终交付 ⇒ 不算 weaker，最多写“出现 N 次失败但均自愈”，verdict 可以是 comparable；只有存在未恢复的失败，或失败/异常已实际波及交付结果、或触发 safety/crash/timeout 信号、或存在状态不一致/边界处理缺失的实质风险时，才允许判 weaker。**独占失败领地**，但失败领地不等于“调用失败次数”这一个数字。\n\n"
         "【三步语义抽取——先做这个，再举证】任务完成、指令遵循、忠实度长期被误当成同一件事，本次强制先做抽取动作再找证据：\n"
-        "  ① 从 user_query 抽出【主诉求】：这个 trace 的用户到底要什么。示例：主诉求=生成新版 exe。**只有 task_completion 引用主诉求**。\n"
-        "  ② 从 user_query 抽出【约束/边界/禁止项清单】：主诉求之外，用户附带的规则，覆盖两类，缺一不可：\n"
+        "  ① 从 user_query 抽出【主诉求】：这个 trace 的用户到底要什么。task_completion 判断最终是否交付；instruction_following 也必须比较两侧是否持续围绕这个主需求推进。\n"
+        "  ② 从 user_query 与 metrics.instruction_obligations / harness_constraints / skill_constraints 抽出【约束/边界/禁止项清单】：主诉求之外，用户或已采集 harness 附带的规则，覆盖三类：\n"
         "     (a) 边界/禁止类：例如“不要破坏现有结构”“按 dist 现有格式”“只改 X 不动 Y”“中英文一致”“禁止硬编码”。\n"
         "     (b) 手段/工具/harness 指定类：用户明确点名了“要用什么方式/工具/MCP/skill 去做”，哪怕没有指名具体是哪一个（例如“你用 MCP 看一下”“调用某个 skill 处理”“用工具去查”）。"
+        "     (c) 已采集 harness/skill 流程类：trace 中已经出现的 system/developer/rules/AGENTS.md/SKILL.md 流程或边界。没有采集到这类 harness 时不要写“缺证据”，直接按用户需求和可见约束对比。\n"
         "只要用户点名了实现手段本身，这就是独立于主诉求的一条约束——即使目标和手段写在同一句话里也必须拆开：目标进主诉求，手段进约束清单，**不允许整体揉进主诉求就当没有约束**。\n"
-        "**只有 instruction_following 引用这个清单**，逐条对照 candidate/base 是否遵守：对手段类约束，要看各自 trace 里是否真的调用了对应类型的工具/MCP/skill，而不是绕开约束凭其他方式达成目标。"
-        "若用户原话里除主诉求外**确实没有任何附加约束**（包括没有指定任何手段/工具/MCP/skill），instruction_following 才可以写“用户未提额外约束，仅默认要求主诉求达成”并给出 comparable + tie，evidence 用 user_query:无附加约束；**只要指定了任何手段，哪怕很笼统，都不允许再套用这句话**，必须逐条核实两侧是否真正使用了该手段。**禁止把主诉求当作约束再讲一遍**。\n"
+        "**只有 instruction_following 引用这个清单**，逐条对照 candidate/base 是否遵守：用户主需求看两侧行动路径是否偏离；手段类约束看各自 trace 里是否真的调用了对应类型的工具/MCP/skill，而不是绕开约束凭其他方式达成目标。"
+        "若用户原话里除主诉求外**确实没有任何附加约束**（包括没有指定任何手段/工具/MCP/skill）且未采集到 harness/skill，instruction_following 才可以写“用户未提额外约束，仅默认要求主诉求达成”并给出 comparable + tie；**只要指定了任何手段或采集到 harness/skill 约束，都不允许再套用这句话**。**不要把未采集到 harness 当作缺证据扣分**。\n"
         "  ③ 从 final_response 抽出【agent 具体声称清单】：faithfulness 回答的是“候选/Base 说过的话是否属实”，不是“东西有没有交付”——判断对象是**话**，不是**物**。合格声称必须是可独立核验的过程性/数量性/状态性陈述，例如“265 项测试全部通过”“doctor 通过”“已升 v6→v7”“已修改 X 处”。"
         "**反例（不算声称，禁止当作 faithfulness 证据）**：单纯陈述“生成/交付/完成了 XX 文件或结果”本身——这只是复述交付物，属于 task_completion 的判断对象。自检方法：把这句话从 final_response 里去掉后，task_completion 的证据是否也随之消失——如果是，两个维度不能共用同一句话。"
         "**若逐句检查后除交付物陈述外确实没有其他可验证声称**，该侧的 faithfulness claim 必须写“agent 未在回复中提出独立于交付物的可验证声称”，evidence 用 final_response:无独立声称，**不允许为了凑证据数量硬把交付物包装成一个 claim**。"
@@ -1594,7 +1615,7 @@ def _build_ab_compare_prompt(compare_input: dict[str, Any], *, blind: bool = Fal
         "  - task_completion → 允许前缀：final_response、assertion:xxx、file:path、artifact:xxx。quote 描述【主诉求】达成情况：用户要 X，交付了 X 或未交付 X。**严禁 tool_call#N**。\n"
         "  - tool_use → 允许前缀：tool_choice:tool_name、metrics:tool_kind_count、metrics:tool_count。quote 写选型对比，例如 quote=\"Base 用 Grep 一次搜索，候选用 Read 循环 8 次读取——候选选型次优\"。**严禁 metrics:tool_error_count**。\n"
         "  - reasoning → 允许前缀：step:strategy_shift、step:plan_update、step:thinking、metrics:strategy_shifts_count。quote 写路径特征（绕路/重复/直达），不允许放 transcript 原文。\n"
-        "  - instruction_following → 允许前缀：user_query:约束点。quote 必须逐条写【约束/边界/禁止项】的具体名字，边界类和手段/工具/MCP/skill 指定类都算：例如 quote=\"约束『不要破坏现有结构』：Base 未破坏 / 候选 未破坏\" 或 quote=\"约束『需用 MCP』：Base 是否调用 MCP / 候选 是否调用 MCP\"。**严禁把主诉求（生成 exe）当约束再讲一遍**。只有确实没指定任何边界或手段时才明写 quote=\"用户未提附加约束\"。\n"
+        "  - instruction_following → 允许前缀：user_query:primary_request、user_query:约束点、user_query:harness_N、harness:xxx、skill:xxx、final_response:instruction_outcome、assertion:instruction-obligations-followed、metrics:tool_count、step:N、tool_call:N。必须更全面比较两侧：①主需求是否贯穿行动路径和最终交付；②用户显式边界/禁止项；③用户指定手段/工具/MCP/skill；④已采集 rules/AGENTS/system/developer/SKILL harness；⑤是否存在确定性违背。user_query 只能列要求清单，不能单独当作遵守证明，至少配一条 final_response/assertion/step/tool_call/metrics 行为证据。例如 quote=\"主需求『生成新版 exe』：Base final_response 交代了交付结果，候选未交代\"、quote=\"约束『需用 MCP』：Base 是否调用 MCP / 候选 是否调用 MCP\"。只有确实没指定任何边界或手段且未采集到 harness/skill 时才明写 quote=\"用户未提附加约束\"。\n"
         "  - faithfulness → 允许前缀 **必须成对**：claim:XX + tool_call#N（该 tool_call 支持或反驳该 claim）。缺一不可。claim 必须是从 final_response 抽出的**具体可验证声称**（数字/状态词/操作声称），而不是「生成了 exe」这种交付物本身。**严禁只用 final_response 或只用一般 tool_call**。**例外**：若某侧 final_response 除交付物陈述外确实没有其他可验证声称，允许该侧写 claim:未提出独立声称 + final_response:无独立声称 这一对。\n"
         "  - efficiency → 允许前缀：metrics:total_tokens、metrics:input_tokens、metrics:output_tokens、metrics:duration_ms、metrics:tool_count、metrics:step_count、metrics:tool_kind_count、metrics:thinking_steps、metrics:repeated_tool_calls。**两侧都必须同时包含 ref=metrics:duration_ms、ref=metrics:total_tokens、ref=metrics:tool_count 这三条**（分别对应耗时/token消耗/工具调用次数，三者都要以证据条目形式列出，不能只在 review 自然语言里提一句；duration_ms 的分钟数值必须直接取自 metrics.duration_min 字段，不要自己换算），可以再加其他前缀补充。**严禁 metrics:tool_error_count 与失败信息，也不要新造 metrics:duration_min 这个 ref 名**。\n"
         "  - reliability → 允许前缀：step:error_recovery、metrics:tool_error_count、metrics:unrecovered_failures、metrics:error_recovery_steps、assertion:safety_xxx、event:crash、event:timeout、**reliability:failure_recovery、reliability:edge_case_handling、reliability:state_consistency**。**必须同时给出这三条固定 ref，两侧各一份**：reliability:failure_recovery（quote 体现“是否恢复/是否影响结果”，例如“候选 N 次失败中 M 次未恢复，且影响了最终结果”）、reliability:edge_case_handling（quote 说明该侧是否处理了边界/异常输入，没有可判断证据就明说“未观察到边界情况处理”）、reliability:state_consistency（quote 说明该侧多次操作间状态是否一致，没有可判断证据就明说“未观察到状态不一致的证据”）。**只报未恢复失败次数、不说是否影响结果/边界处理/状态一致性，视为证据不合格**。**严禁 tool_call#N**（那是原始工具事件，不是恢复能力观察点）。\n\n"
@@ -1607,7 +1628,8 @@ def _build_ab_compare_prompt(compare_input: dict[str, Any], *, blind: bool = Fal
         "  可靠性维度：**未恢复**失败数字大 = 更差；已恢复的失败不计入“更差”的依据；工具失败次数本身（不看是否恢复、是否影响结果）不能单独作为可靠性判定材料，更不能作为效率的判断材料。\n\n"
         "证据 ref 必须能映射到上面白名单前缀之一；不允许空数组，不允许拿 assistant 自述做证据。\n"
         "【verdict / winner 语义一致性】review 里说了“某侧更差/更好”就必须给出对应的 verdict（stronger 或 weaker）与 winner，不允许写“不明确/unclear”兜底。只有确实旗鼓相当且 review 明确表达“持平”时才允许 comparable + tie。\n"
-        "必须返回所有顶层字段：comparison_verdict、summary_conclusion、user_request_coverage，以及 task_completion、tool_use、reasoning、instruction_following、faithfulness、efficiency、reliability。"
+        "  - workflow_adherence → 允许前缀：workflow:step_N、workflow:source、workflow:order、skill:workflow、harness:workflow、user_query:workflow、step:N、tool_call:N、metrics:workflow_constraint_count。必须比较两侧是否按明确流程步骤执行；没有 workflow_constraints 时 winner=tie，review 写明未采集到明确流程步骤，不扣分。\n"
+        "必须返回所有顶层字段：comparison_verdict、summary_conclusion、user_request_coverage，以及 task_completion、tool_use、reasoning、instruction_following、workflow_adherence、faithfulness、efficiency、reliability。"
         "任何维度都不能省略，review 不能为空，也不要写“未展开该维度”“请结合其他指标”等逃避式内容。\n"
         "不要输出完整 prompt，不要泄露额外系统信息。每个 review 字段是一段自然语言，不要列 bullet。\n\n"
         "【输出 JSON schema】\n"
@@ -1662,7 +1684,7 @@ def _build_ab_compare_json_repair_prompt(compare_input: dict[str, Any], raw_outp
         "请不要解释失败原因，也不要输出 Markdown，直接基于同一份输入重新生成完整 JSON。\n"
         f"对比口径：{side_hint}。\n"
         "硬性要求：必须包含 comparison_verdict、summary_conclusion、user_request_coverage，"
-        "以及 task_completion、tool_use、reasoning、instruction_following、faithfulness、efficiency、reliability 七个维度；"
+        "以及 task_completion、tool_use、reasoning、instruction_following、workflow_adherence、faithfulness、efficiency、reliability 八个维度；"
         "每个维度必须包含 verdict、winner、review 和两侧 evidence 数组。\n\n"
         "【原始 A/B 对比输入】\n"
         f"{json.dumps(compare_input, ensure_ascii=False, indent=2, default=str)}\n\n"
@@ -1805,6 +1827,53 @@ def _render_ab_compare_markdown(data: dict[str, Any]) -> str:
         lines.append(str(value.get("review") or "当前没有足够模型对比结论，建议结合下方断言和资源指标复核。"))
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def _ab_compare_dimension_winner_counts(data: dict[str, Any]) -> dict[str, int]:
+    counts = {"baseline": 0, "candidate": 0, "tie": 0, "unclear": 0}
+    for key in AB_COMPARE_DIMENSIONS:
+        value = data.get(key) if isinstance(data.get(key), dict) else {}
+        winner = str(value.get("winner") or "unclear").strip().lower()
+        if winner in counts:
+            counts[winner] += 1
+        else:
+            counts["unclear"] += 1
+    return counts
+
+
+def _align_ab_compare_overall_verdict(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep the machine verdict aligned with the per-dimension comparison.
+
+    The LLM occasionally writes "mixed" even when every comparable dimension
+    chooses the same side. The UI gives the top-level verdict a lot of weight,
+    so the normalizer owns this consistency check.
+    """
+    out = dict(data)
+    counts = _ab_compare_dimension_winner_counts(out)
+    baseline_wins = counts["baseline"]
+    candidate_wins = counts["candidate"]
+    aligned: str | None = None
+    if baseline_wins > candidate_wins:
+        aligned = "baseline_better"
+    elif candidate_wins > baseline_wins:
+        aligned = "candidate_better"
+    elif baseline_wins == 0 and candidate_wins == 0:
+        aligned = "no_material_difference"
+    elif baseline_wins == candidate_wins:
+        aligned = "mixed"
+    changed = bool(aligned and out.get("comparison_verdict") != aligned)
+    if changed:
+        out["comparison_verdict"] = aligned
+    if aligned:
+        summary = str(out.get("summary_conclusion") or "").strip()
+        if summary and (changed or len(summary) < 180):
+            out["summary_conclusion"] = (
+                f"{summary}（系统校准：{len(AB_COMPARE_DIMENSIONS)} 个维度中 Base 胜 {baseline_wins} 项、候选胜 {candidate_wins} 项、"
+                f"持平 {counts['tie']} 项，因此总体结论按分维度多数修正。）"
+            )[:1600]
+    out["dimension_winner_counts"] = counts
+    out["review_markdown"] = _render_ab_compare_markdown(out)
+    return out
 
 
 def _fallback_ab_llm_compare(
@@ -2041,6 +2110,8 @@ def _dimension_matches_own_whitelist(dim_data: dict[str, Any], evidence_keys: tu
 REGRESSION_DIMENSION_FALLBACK_NOTES: dict[str, str] = {
     "capability_preservation": "断言层面未发现独立退化信号，保守判定候选仍保持该能力。",
     "user_goal_coverage": "候选与基线在核心诉求覆盖上暂无可展开的独立差异描述。",
+    "instruction_obligation_regression": "用户需求与已采集约束暂无新增违背信号，指令遵循保守判定为保持。",
+    "workflow_adherence_regression": "未观察到候选相对基线出现跳步、乱序或漏掉规定校验的独立流程信号。",
     "behavioral_change_risk": "策略或工具选型层面暂无可归属本维度的独立观察，风险保守判定为低。",
     "evidence_faithfulness": "候选声称暂无可独立核验的额外线索，忠实度保守判定为保持。",
     "workflow_integrity": "流程恢复层面暂缺可归属本维度的独立观测点，完整性保守判定为保持。",
@@ -2052,6 +2123,7 @@ AB_COMPARE_DIMENSION_FALLBACK_NOTES: dict[str, str] = {
     "tool_use": "工具选型层面暂无可归属本维度的独立选择差异，判定为相当。",
     "reasoning": "推理路径层面暂无可归属本维度的独立路径差异，判定为相当。",
     "instruction_following": "约束遵循层面暂无可归属本维度的独立遵循差异，判定为相当。",
+    "workflow_adherence": "流程步骤层面暂无可归属本维度的独立顺序差异，判定为相当。",
     "faithfulness": "声称核验层面暂无可归属本维度的独立可验证声称，判定为相当。",
     "efficiency": "资源消耗层面暂无可归属本维度的独立对比数字，判定为相当。",
     "reliability": "失败恢复层面暂无可归属本维度的独立恢复差异，判定为相当。",
@@ -2064,6 +2136,8 @@ AB_COMPARE_DIMENSION_FALLBACK_NOTES: dict[str, str] = {
 _DIMENSION_SHORT_CODES: dict[str, str] = {
     "capability_preservation": "cap",
     "user_goal_coverage": "ugc",
+    "instruction_obligation_regression": "ior",
+    "workflow_adherence_regression": "war",
     "behavioral_change_risk": "bcr",
     "evidence_faithfulness": "ef",
     "workflow_integrity": "wfi",
@@ -2072,6 +2146,7 @@ _DIMENSION_SHORT_CODES: dict[str, str] = {
     "tool_use": "tu",
     "reasoning": "rsn",
     "instruction_following": "if",
+    "workflow_adherence": "wa",
     "faithfulness": "fa",
     "efficiency": "eff",
     "reliability": "rel",
@@ -2653,6 +2728,7 @@ def _run_ab_llm_compare(
     )
     if blind and baseline_side and candidate_side:
         result = _unblind_ab_compare(result, baseline_side, candidate_side)
+    result = _align_ab_compare_overall_verdict(result)
     if result.get("status") == "completed":
         _AB_LLM_COMPARE_CACHE[cache_key] = copy.deepcopy(result)
     return result
@@ -2661,6 +2737,8 @@ def _run_ab_llm_compare(
 REGRESSION_DIMENSIONS = (
     "capability_preservation",
     "user_goal_coverage",
+    "instruction_obligation_regression",
+    "workflow_adherence_regression",
     "behavioral_change_risk",
     "evidence_faithfulness",
     "workflow_integrity",
@@ -2670,6 +2748,11 @@ REGRESSION_DIMENSIONS = (
 REGRESSION_REF_WHITELIST: dict[str, tuple[str, ...]] = {
     "capability_preservation": ("assertion:",),
     "user_goal_coverage": ("user_query:", "final_response", "assertion:"),
+    "instruction_obligation_regression": ("user_query:", "harness:", "skill:"),
+    "workflow_adherence_regression": (
+        "workflow:", "skill:workflow", "harness:workflow", "user_query:workflow", "step:", "tool_call:",
+        "metrics:workflow_constraint_count",
+    ),
     "behavioral_change_risk": ("tool_choice:", "step:strategy_shift", "step:mode_switch", "metrics:strategy_shifts", "metrics:plan_update_count"),
     "evidence_faithfulness": ("claim:", "tool_call", "final_response:无独立声称"),
     "workflow_integrity": (
@@ -2795,6 +2878,22 @@ def _build_regression_gate(
         resource_warnings.append("Candidate introduced additional tool errors.")
     warning_reasons.extend(resource_warnings)
 
+    base_instruction_violations = _safe_float(base_metrics.get("instruction_obligation_violation_count"))
+    cand_instruction_violations = _safe_float(cand_metrics.get("instruction_obligation_violation_count"))
+    if cand_instruction_violations > base_instruction_violations:
+        instruction_msg = (
+            f"Candidate introduced instruction/harness violations "
+            f"({base_instruction_violations:.0f} → {cand_instruction_violations:.0f})."
+        )
+        if cand_instruction_violations >= 1 and any(
+            str(item.get("severity") or "").lower() == "high"
+            for item in cand_metrics.get("instruction_obligation_violations") or []
+            if isinstance(item, dict)
+        ):
+            blocking_reasons.append(instruction_msg)
+        else:
+            warning_reasons.append(instruction_msg)
+
     verdict = "PASS"
     if blocking_reasons:
         verdict = "FAIL"
@@ -2908,6 +3007,8 @@ def _build_regression_prompt(compare_input: dict[str, Any]) -> str:
         "new_regressions": ["中文数组。candidate 相比 baseline 新增的退化。"],
         "capability_preservation": dim_schema("preserved | degraded | unclear"),
         "user_goal_coverage": dim_schema("preserved | degraded | unclear"),
+        "instruction_obligation_regression": dim_schema("preserved | degraded | unclear"),
+        "workflow_adherence_regression": dim_schema("preserved | degraded | unclear"),
         "behavioral_change_risk": dim_schema("low | medium | high | unclear"),
         "evidence_faithfulness": dim_schema("preserved | degraded | unclear"),
         "workflow_integrity": dim_schema("preserved | degraded | unclear"),
@@ -2936,27 +3037,33 @@ def _build_regression_prompt(compare_input: dict[str, Any]) -> str:
         "确定性断言退化是最高优先级证据。关键断言退化、任务结果退化、严重安全/隐私/工具使用退化应判为 FAIL。\n"
         "质量、流程、证据、效率存在非阻断风险时判 WARN；只有没有实质退化证据时才判 PASS。\n"
         "如果两条 trace 可比性不足，要在 warning_reasons 中用中文说明，并保持保守判断。\n"
-        "【每维度必须给出两侧证据】6 个维度对象都必须填 baseline_evidence 与 candidate_evidence，各至少 1 条最多 4 条。"
+        f"【每维度必须给出两侧证据】{len(REGRESSION_DIMENSIONS)} 个维度对象都必须填 baseline_evidence 与 candidate_evidence，各至少 1 条最多 4 条。"
         "证据 ref 必须映射到 step:N、tool_call:N、断言 key、指标名或 transcript 行号；不允许空数组或占位；不允许拿最终回复自述做证据。\n"
         "【六维度语义边界——严格互斥，禁止重叠，这是本次修复的核心要求】能力保持、行为变化风险、流程完整性三个维度过去长期被误当成同一件事（全都在讲“工具调用失败次数”），本次严格切分，每个维度只能使用自己专属的信号，**同一个 ref 或同一句 quote 不允许出现在两个维度里，出现即视为发布阻断级缺陷**：\n"
         "  * capability_preservation 只回答“**baseline 已通过的断言，candidate 是否还通过**”——纯粹基于确定性断言 pass/fail 判断，**跟工具调用失败次数无关**（工具中途失败但最终断言仍通过，不算能力退化）。\n"
+        "  * instruction_obligation_regression 只回答“**candidate 是否比 baseline 更不遵循用户需求、显式约束或已采集 harness/skill 约束**”——看 user_query、instruction_obligations、harness_constraints、skill_constraints 和 violation_count。没有采集到 harness/skill 时不要扣分，按用户需求和可见约束判断。\n"
+        "  * workflow_adherence_regression 只回答“**candidate 是否比 baseline 更不按明确流程/步骤顺序执行**”——看 metrics.workflow_constraints、workflow_trace_events、SKILL.md 工作流、AGENTS/rules、system/developer、工具/MCP 文档或 gold process。没有采集到 workflow_constraints 时判 preserved/unclear，不扣分；不要把禁止项或失败恢复写到这里。\n"
         "  * behavioral_change_risk 只回答“**candidate 有没有换了一种做法（策略/工具选型/计划变更）**”——看的是“做法变了没有”，不是“做法失败了没有”。\n"
         "  * workflow_integrity 只回答“**candidate 遇到问题时过程是否稳健、结果是否受影响**”——是唯一允许引用 tool_error_count / unrecovered_failures 的维度，但**不是简单比较失败次数谁多谁少**，必须依次覆盖三个子方面（缺一不可）：①**失败恢复能力**——未恢复失败数（已恢复的失败不算退化证据）、未恢复失败是否真的波及了最终结果；②**边界情况处理**——两侧是否有意识地处理了输入缺失/异常参数/极端场景等边界条件；③**状态是否一致**——两侧多次操作/重试之间状态有没有出现自相矛盾、重复副作用或数据不一致。出现失败但全部自愈、未影响交付 ⇒ 不算退化，最多写“出现 N 次失败但均自愈”，判 preserved 或 low；只有未恢复失败增多且影响了结果，或触发崩溃/超时/safety 信号，或存在状态不一致/边界处理缺失的实质风险时才判 degraded。\n"
         "  * efficiency_regression 只回答“**candidate 比 baseline 多花了多少资源**”——只看 token/耗时（分钟）/步骤数，不看失败或恢复。"
         "**耗时数字必须直接使用 metrics 中已经算好的 duration_min 字段，禁止自己拿 duration_ms 换算（历史上模型换算出错，把秒当分钟写）**。\n"
         "【三步语义抽取——先做这个，再举证】三个易混维度必须先做抽取动作再找证据：\n"
         "  ① 从 baseline 与 candidate 的共同 user_query 抽出【主诉求】：用户要什么。**只有 user_goal_coverage 引用主诉求**，判断 candidate 是否仍覆盖 baseline 已覆盖的核心诉求。\n"
-        "  ② 从 candidate 的 final_response 抽出【具体可验证声称】：evidence_faithfulness 回答的是“candidate 说过的话是否属实”，不是“东西有没有交付”。合格声称是可独立核验的过程性/数量性/状态性陈述（数字/状态词/操作声称），例如“265 项测试全部通过”“doctor 通过”。**反例**：单纯陈述“生成/交付/完成了 XX 文件或结果”本身属于 user_goal_coverage 的判断对象，不能当 evidence_faithfulness 的 claim。若 final_response 除交付物陈述外确实没有其他可验证声称，claim 必须写“candidate 未提出独立于交付物的可验证声称”，不允许硬凑。**只有 evidence_faithfulness 引用这些声称**，逐条用 tool_result 反查，不允许把最终交付物本身当声称。\n"
-        "  ③ 从 baseline 的 assertion_results 抽出【已通过断言清单】。**只有 capability_preservation 引用该清单**，逐条对照 candidate 是否仍通过。这是唯一可信来源；**即使 candidate 出现了工具失败，只要断言仍通过就不算能力退化**，不要把 workflow_integrity 的证据搬到这里。\n"
+        "  ② 从两侧 metrics.instruction_obligations 抽出【用户需求与显式约束/harness/skill 清单】：第一项主需求也要看 candidate 是否持续遵循；其余用户边界、禁止项、手段要求、已采集 harness/skill 约束逐条比较。candidate 新增违背，尤其是用户明确底线或 harness/skill 禁止项违背，应进入 instruction_obligation_regression，并在 gate 中给 WARN/FAIL。\n"
+        "  ③ 从两侧 metrics.workflow_constraints / workflow_trace_events 抽出【明确流程步骤清单】。**只有 workflow_adherence_regression 引用该清单**，比较 candidate 是否跳过、乱序或未完成 baseline 遵守的规定流程；SKILL.md 中“工作流”进这里，“约束/禁止”进 instruction_obligation_regression。\n"
+        "  ④ 从 candidate 的 final_response 抽出【具体可验证声称】：evidence_faithfulness 回答的是“candidate 说过的话是否属实”，不是“东西有没有交付”。合格声称是可独立核验的过程性/数量性/状态性陈述（数字/状态词/操作声称），例如“265 项测试全部通过”“doctor 通过”。**反例**：单纯陈述“生成/交付/完成了 XX 文件或结果”本身属于 user_goal_coverage 的判断对象，不能当 evidence_faithfulness 的 claim。若 final_response 除交付物陈述外确实没有其他可验证声称，claim 必须写“candidate 未提出独立于交付物的可验证声称”，不允许硬凑。**只有 evidence_faithfulness 引用这些声称**，逐条用 tool_result 反查，不允许把最终交付物本身当声称。\n"
+        "  ⑤ 从 baseline 的 assertion_results 抽出【已通过断言清单】。**只有 capability_preservation 引用该清单**，逐条对照 candidate 是否仍通过。这是唯一可信来源；**即使 candidate 出现了工具失败，只要断言仍通过就不算能力退化**，不要把 workflow_integrity 的证据搬到这里。\n"
         "【每维度证据 ref 前缀白名单——违反即失败】ref 必须以下列前缀开头，不同维度不允许共用同一 ref：\n"
         "  - capability_preservation → 允许前缀：assertion:xxx（baseline 已通过但 candidate 失败或缺失的具体断言）。quote 写 “断言 X：baseline pass / candidate fail”。**严禁 tool_call#N 与任何 metrics:xxx**。\n"
         "  - user_goal_coverage → 允许前缀：user_query:主诉求、final_response、assertion:xxx。quote 写 “主诉求 X：baseline 覆盖 / candidate 覆盖或未覆盖”。\n"
+        "  - instruction_obligation_regression → 允许前缀：user_query:primary_request、user_query:constraint_N、user_query:harness_N、harness:xxx、skill:xxx。只写用户需求、显式约束、已采集 harness/skill 流程是否新增违背；未采集到 harness/skill 时不要写缺证据或扣分。\n"
+        "  - workflow_adherence_regression → 允许前缀：workflow:step_N、workflow:source、workflow:order、skill:workflow、harness:workflow、user_query:workflow、step:N、tool_call:N、metrics:workflow_constraint_count。只写明确流程步骤是否按顺序执行；没有 workflow_constraints 时不要扣分。\n"
         "  - behavioral_change_risk → 允许前缀：tool_choice:tool_name（工具选型差异）、step:strategy_shift、step:mode_switch、metrics:strategy_shifts（策略转换次数对比）、metrics:plan_update_count（计划调整次数对比）。**严禁 metrics:tool_error_count、metrics:unrecovered_failures 与 tokens**。若两侧策略转换/计划调整次数相当且工具选型一致，判 low，不要硬套工具失败当风险。\n"
         "  - evidence_faithfulness → 允许前缀 **必须成对**：claim:XX + tool_call#N。claim 必须是从 candidate final_response 抽出的具体可验证声称。**严禁把最终交付物当声称**。缺一不可。**例外**：若确实没有独立于交付物的可验证声称，允许写 claim:未提出独立声称 + final_response:无独立声称 这一对。\n"
         "  - workflow_integrity → 允许前缀：step:error_recovery、metrics:unrecovered_failures、metrics:tool_error_count、metrics:error_recovery_steps、event:crash、event:timeout、**reliability:failure_recovery、reliability:edge_case_handling、reliability:state_consistency**。**两侧都必须同时给出这三条固定 ref**：reliability:failure_recovery（quote 体现“是否恢复/是否影响结果”，例如“baseline N 次失败全部恢复，candidate N' 次失败中 M' 次未恢复且影响了最终交付”）、reliability:edge_case_handling（quote 说明该侧是否处理了边界/异常输入，没有可判断证据就明说“未观察到边界情况处理”）、reliability:state_consistency（quote 说明该侧多次操作间状态是否一致，没有可判断证据就明说“未观察到状态不一致的证据”）。**只报未恢复失败次数、不说是否影响结果/边界处理/状态一致性，视为证据不合格**。\n"
         "  - efficiency_regression → 允许前缀：metrics:total_tokens、metrics:duration_ms、metrics:tool_count、metrics:step_count、metrics:thinking_steps、metrics:repeated_tool_calls。**两侧都必须同时包含 ref=metrics:duration_ms、ref=metrics:total_tokens、ref=metrics:tool_count 这三条**（分别对应耗时/token消耗/工具调用次数，三者都要以证据条目形式列出，不能只在 review 里提一句；duration_ms 的分钟数值必须直接取自 metrics.duration_min 字段，不要自己换算），可以再加其他前缀补充。**严禁 metrics:tool_error_count，也不要新造 metrics:duration_min 这个 ref 名**。\n"
         "【数字方向硬约束——回归检测】效率退化数字 candidate > baseline ⇒ candidate 效率退化 (verdict=warning 或 severe)；**未恢复的** unrecovered_failures candidate > baseline 且影响结果 ⇒ workflow_integrity=degraded（若失败均已恢复、未影响结果，即使次数增多也不应直接判 degraded，最多 low/warning 级别提示）；strategy_shifts/plan_update_count 两侧相差不大 ⇒ behavioral_change_risk=low。绝不允许写“candidate 消耗更多但更高效”这种前后矛盾的结论。\n"
-        "**再次强调**：capability_preservation / behavioral_change_risk / workflow_integrity 三个维度分别只能用断言 / 策略变化 / 未恢复失败数三种互不重叠的证据，**任何两个维度出现相同 ref 或高度相似的 review 文字都会被判定为不合格并要求你重新生成**，请一次性按上述边界写对。\n\n"
+        "**再次强调**：capability_preservation / instruction_obligation_regression / behavioral_change_risk / workflow_integrity 四个维度分别只能用断言 / 指令义务 / 策略变化 / 未恢复失败数四种互不重叠的证据，**任何两个维度出现相同 ref 或高度相似的 review 文字都会被判定为不合格并要求你重新生成**，请一次性按上述边界写对。\n\n"
         f"{gold_note}"
         "只返回符合下列 schema 的 JSON 对象，不要输出 Markdown 或额外解释：\n"
         f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
@@ -2986,7 +3093,7 @@ def _normalize_regression_compare(data: dict[str, Any], deterministic_gate: dict
         value = data.get(key) if isinstance(data.get(key), dict) else {}
         out[key] = _regression_dimension(
             value.get("verdict"),
-            value.get("review") or value.get("reason"),
+            value.get("review") or value.get("reason") or REGRESSION_DIMENSION_FALLBACK_NOTES.get(key, ""),
             baseline_evidence=value.get("baseline_evidence") or value.get("evidence_baseline") or value.get("evidence"),
             candidate_evidence=value.get("candidate_evidence") or value.get("evidence_candidate") or value.get("evidence"),
         )
@@ -3088,8 +3195,8 @@ def _build_regression_json_repair_prompt(compare_input: dict[str, Any], raw_outp
         "请不要解释失败原因，也不要输出 Markdown，直接基于同一份输入重新生成完整 JSON。\n"
         "硬性要求：必须包含 gate_verdict、summary_conclusion、blocking_reasons、warning_reasons、"
         "preserved_capabilities、new_regressions、manual_review_notes，"
-        "以及 capability_preservation、user_goal_coverage、behavioral_change_risk、"
-        "evidence_faithfulness、workflow_integrity、efficiency_regression 六个维度；"
+        "以及 capability_preservation、user_goal_coverage、instruction_obligation_regression、workflow_adherence_regression、behavioral_change_risk、"
+        "evidence_faithfulness、workflow_integrity、efficiency_regression 八个维度；"
         "每个维度必须包含 verdict、review、baseline_evidence、candidate_evidence。\n\n"
         "【原始回归检测输入】\n"
         f"{json.dumps(compare_input, ensure_ascii=False, indent=2, default=str)}\n\n"
@@ -3458,8 +3565,21 @@ def _compare_metrics_summary(metrics: dict[str, Any]) -> dict[str, Any]:
         "repeated_tool_calls",
         "error_recovery_steps",
         "unrecovered_failures",
+        "user_boundary_constraint_count",
+        "harness_constraint_count",
+        "skill_constraint_count",
+        "workflow_constraint_count",
+        "skill_workflow_constraint_count",
+        "instruction_obligation_count",
+        "instruction_obligation_violation_count",
     ]
     out = {key: metrics.get(key) for key in keys}
+    out["instruction_obligations"] = list(metrics.get("instruction_obligations") or [])[:12]
+    out["instruction_obligation_violations"] = list(metrics.get("instruction_obligation_violations") or [])[:8]
+    out["harness_constraints"] = list(metrics.get("harness_constraints") or [])[:8]
+    out["skill_constraints"] = list(metrics.get("skill_constraints") or [])[:8]
+    out["workflow_constraints"] = list(metrics.get("workflow_constraints") or [])[:12]
+    out["workflow_trace_events"] = list(metrics.get("workflow_trace_events") or [])[:12]
     # Pre-computed so the model never has to do the ms->minute division itself
     # in prose (it was getting this arithmetic wrong — writing raw seconds
     # mislabeled as minutes). Deterministic evidence injection also uses this

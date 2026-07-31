@@ -21,6 +21,7 @@ DIMENSION_KEYS = (
     "tool_use",
     "reasoning",
     "instruction_following",
+    "workflow_adherence",
     "faithfulness",
     "efficiency",
     "reliability",
@@ -474,10 +475,50 @@ def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]
     if not isinstance(dim, dict):
         return dim
     dim = dict(dim)
+    obligations = metrics.get("instruction_obligations") if isinstance(metrics.get("instruction_obligations"), list) else []
     constraints = metrics.get("user_boundary_constraints") if isinstance(metrics.get("user_boundary_constraints"), list) else []
-    violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
+    violations = metrics.get("instruction_obligation_violations") if isinstance(metrics.get("instruction_obligation_violations"), list) else []
+    if not violations:
+        violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
     evidence = [item for item in (dim.get("evidence") or []) if isinstance(item, dict)]
     existing_refs = {str(item.get("ref") or "") for item in evidence}
+    behavior_evidence: list[dict[str, Any]] = []
+    final_response = str(metrics.get("final_response") or metrics.get("assistant_response") or "").strip()
+    if final_response and "final_response:instruction_outcome" not in existing_refs:
+        behavior_evidence.append(
+            {
+                "ref": "final_response:instruction_outcome",
+                "quote": f"最终回应提供了 {len(final_response)} 字内容，需要作为主需求是否落地的行为证据，而不是只引用用户 prompt。",
+                "source": "trace",
+            }
+        )
+    if metrics.get("instruction_obligation_count") and "assertion:instruction-obligations-followed" not in existing_refs:
+        obligation_count = int(metrics.get("instruction_obligation_count") or 0)
+        violation_count = int(metrics.get("instruction_obligation_violation_count") or 0)
+        behavior_evidence.append(
+            {
+                "ref": "assertion:instruction-obligations-followed",
+                "quote": f"确定性断言识别 {obligation_count} 项指令义务、{violation_count} 项确定性违背；这提供约束执行结果信号。",
+                "source": "assertion",
+            }
+        )
+    if metrics.get("tool_count") and "metrics:tool_count" not in existing_refs:
+        behavior_evidence.append(
+            {
+                "ref": "metrics:tool_count",
+                "quote": f"trace 记录到 {int(metrics.get('tool_count') or 0)} 次工具调用，可用于核对手段/工具类约束是否真的发生。",
+                "source": "metrics",
+            }
+        )
+    primary = next((item for item in obligations if isinstance(item, dict) and item.get("category") == "primary_request"), None)
+    if primary and "user_query:primary_request" not in existing_refs:
+        evidence.append(
+            {
+                "ref": "user_query:primary_request",
+                "quote": f"主需求清单『{str(primary.get('text') or '')[:140]}』；是否遵守需结合 final_response/trace 行为证据判断，用户原文本身不算证明。",
+                "source": "user_query",
+            }
+        )
     for idx, item in enumerate(constraints[:6], start=1):
         ref = f"user_query:constraint_{idx}"
         if ref in existing_refs:
@@ -488,8 +529,26 @@ def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]
         evidence.append(
             {
                 "ref": ref,
-                "quote": f"约束『{text[:120]}』需要在 trace 中逐条核对是否遵守。",
+                "quote": f"约束清单『{text[:120]}』；是否遵守需结合 trace 行为、工具调用或断言结果判断，用户原文本身不算证明。",
                 "source": "user_query",
+            }
+        )
+    harness_items = [
+        item for item in obligations
+        if isinstance(item, dict) and item.get("source") not in {"", None, "user_query"} and item.get("category") != "primary_request"
+    ]
+    for idx, item in enumerate(harness_items[:4], start=1):
+        ref = f"user_query:harness_{idx}"
+        if ref in existing_refs:
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        evidence.append(
+            {
+                "ref": ref,
+                "quote": f"已采集 {item.get('source') or 'harness'} 约束清单『{text[:120]}』；仅按已采集内容核对，未采集到的 harness 不臆测。",
+                "source": str(item.get("source") or "harness"),
             }
         )
     for idx, item in enumerate(violations[:4], start=1):
@@ -506,13 +565,19 @@ def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]
             dim["review"] = f"用户提出了 {len(constraints)} 条显式边界/硬约束，不能按“无附加约束”处理；需逐条核对是否被满足。"
             if str(dim.get("verdict") or "") == "yes":
                 dim["verdict"] = "partial"
+        elif constraints and len(review) < 80:
+            names = "、".join(str(item.get("text") or "").strip()[:24] for item in constraints[:3] if isinstance(item, dict) and str(item.get("text") or "").strip())
+            dim["review"] = (
+                f"本轮除主需求外还识别到 {len(constraints)} 条显式约束"
+                f"{'：' + names if names else ''}。当前未发现确定性违背，但结论必须结合最终回应、工具调用和断言结果核对，不能只把用户 prompt 当作遵守证据。"
+            )
     if violations:
         dim["review"] = (
-            f"用户提出了 {len(constraints)} 条显式边界/硬约束，其中 {len(violations)} 条出现确定性违背；"
+            f"本轮识别到 {len(obligations) or len(constraints)} 项指令义务，其中 {len(violations)} 项出现确定性违背；"
             f"{violations[0].get('reason') if isinstance(violations[0], dict) else '需复核约束执行情况'}"
         )
         dim["verdict"] = "no" if any(str(v.get("severity") or "") == "high" for v in violations if isinstance(v, dict)) else "partial"
-    dim["evidence"] = evidence[:10]
+    dim["evidence"] = (behavior_evidence + evidence)[:10]
     return dim
 
 
@@ -601,6 +666,10 @@ def _deterministic_structured(
         "tool_use": _dimension("suboptimal", f"本轮记录到 {calls} 次工具调用，其中失败 {failed} 次；失败是否影响交付需结合原始工具结果判断。"),
         "reasoning": _dimension("on_track", "未调用 critic 模型时不对推理轨迹做强语义判断，仅提示回看步骤顺序与恢复动作。"),
         "instruction_following": _dimension("partial", "未调用 critic 模型时不推断隐含指令，只保留硬性断言的客观结果。"),
+        "workflow_adherence": _dimension(
+            "not_applicable",
+            "未调用 critic 模型时不推断流程顺序；只有采集到用户、SKILL、AGENTS/rules、system/developer 或工具文档中的明确流程步骤时才评估。",
+        ),
         "faithfulness": _dimension("partial", "最终回复关键声称仍需对照 tool_result 与原始 transcript 复核。"),
         "efficiency": _dimension("normal", f"运行统计为 {total} tokens、{elapsed} 分钟、{calls} 次工具调用。"),
         "reliability": _dimension("clear" if failed == 0 else "minor_issues", f"工具失败数为 {failed}，由确定性断言继续标记是否阻断。"),
@@ -635,6 +704,17 @@ def _normalize_structured(data: dict[str, Any], metrics: dict[str, Any]) -> dict
         summary = fallback["summary_conclusion"]
     if not summary.startswith("结论"):
         summary = "结论：" + summary
+    if len(summary) < 120:
+        total = int(metrics.get("total_tokens") or 0)
+        calls = int(metrics.get("tool_count") or 0)
+        failed = int(metrics.get("tool_error_count") or 0)
+        obligations = int(metrics.get("instruction_obligation_count") or 0)
+        violations = int(metrics.get("instruction_obligation_violation_count") or metrics.get("boundary_constraint_violation_count") or 0)
+        summary = (
+            f"{summary} 本轮 eval 还应结合可观测证据复核：trace 记录 {total} tokens、{calls} 次工具调用、"
+            f"{failed} 次工具失败；指令遵循侧识别 {obligations} 项需求/约束义务、{violations} 项确定性违背。"
+            "结论重点是交付是否覆盖用户需求、证据是否能支撑 agent 声称，以及剩余风险是否会影响验收。"
+        )
     out["summary_conclusion"] = summary[:900]
     overall = str(data.get("overall_verdict") or data.get("verdict") or fallback["overall_verdict"]).strip()
     if overall not in {"resolved", "partial", "unresolved"}:
@@ -676,6 +756,7 @@ def _render_review_markdown(data: dict[str, Any]) -> str:
         "tool_use": "工具使用",
         "reasoning": "推理路径",
         "instruction_following": "指令遵循",
+        "workflow_adherence": "流程遵循",
         "faithfulness": "忠实度",
         "efficiency": "效率",
         "reliability": "可靠性",
@@ -705,7 +786,7 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         ],
     }
     schema = {
-        "summary_conclusion": "必须以“结论：”开头的一段自然语言。覆盖整体判断、用户诉求、agent关键动作、交付价值、主要风险。",
+        "summary_conclusion": "必须以“结论：”开头的一段 180-280 字自然语言。只写本条 trace 的 eval verdict：整体质量、用户需求覆盖、主要证据、关键风险；至少点名 2-3 个具体证据或风险信号。不要写成用户问题背景总结或替代方案建议。",
         "overall_verdict": "resolved | partial | unresolved",
         USER_REQUEST_COVERAGE_KEY: "80-160字自然语言段落。只判断用户诉求是否被覆盖：用户明确要求了什么、主 agent 实际交付了什么、哪些诉求已覆盖、哪些仍缺证据或未完成。",
         "task_completion": dimension_schema_with_evidence(
@@ -722,11 +803,15 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         ),
         "instruction_following": dimension_schema_with_evidence(
             "yes | partial | no",
-            "80-160字完整自然语言段落。评估显式指令、边界条件、禁止项、以及用户指定的实现手段/工具/MCP/skill（哪怕没指名具体是哪个）是否被遵循和真正使用。",
+            "80-160字完整自然语言段落。先评估用户主需求是否被行动路径持续遵循，再评估显式边界、禁止项、用户指定手段/工具/MCP/skill，以及已采集到的 rules/AGENTS/system/developer/skill harness 是否被遵循。未采集到 harness 时不要臆测或扣分。",
+        ),
+        "workflow_adherence": dimension_schema_with_evidence(
+            "strict | partial | violated | not_applicable",
+            "80-160字完整自然语言段落。只评估已采集到的明确流程/步骤顺序要求是否按顺序执行，来源包括用户 prompt、SKILL.md 工作流、AGENTS.md/rules、system/developer 指令、工具/MCP 文档或 gold process。没有采集到流程要求时给 not_applicable，不写缺证据也不扣分。",
         ),
         "faithfulness": dimension_schema_with_evidence(
             "grounded | partial | hallucinated",
-            "80-160字完整自然语言段落。评估 agent 在过程或结论中说的具体声称（数字/状态词/操作声称）是否被 trace、工具结果、文件内容支持；**不评估交付物本身是否存在**，那是 task_completion 的职责。证据不足时标 partial。",
+            "80-160字完整自然语言段落。只评估 agent 在过程或结论中独立于交付物的具体声称（数字/状态词/操作声称）是否被 trace、工具结果、文件内容支持；**不评估交付物本身是否存在**，那是 task_completion 的职责。证据不足时标 partial。",
         ),
         "efficiency": dimension_schema_with_evidence(
             "normal | high | excessive",
@@ -744,7 +829,7 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
                 "evidence": [{"ref": "step:N | tool_call:N", "quote": "支持或反驳该 claim 的原文片段。", "source": "transcript | tool_result"}],
             }
         ],
-        "review_markdown": "面向前端详情区的 Markdown。只能包含以下 8 个部分，顺序固定：**用户诉求覆盖情况**、**任务完成**、**工具使用**、**推理路径**、**指令遵循**、**忠实度**、**效率**、**可靠性**。每个部分下面写一段完整自然语言评审。不要写“做得好的部分”“主要不足与风险”“工具使用评审”“最终判定/最终判断”等额外章节。",
+        "review_markdown": "面向前端详情区的 Markdown。只能包含以下 9 个部分，顺序固定：**用户诉求覆盖情况**、**任务完成**、**工具使用**、**推理路径**、**指令遵循**、**流程遵循**、**忠实度**、**效率**、**可靠性**。每个部分下面写一段完整自然语言评审。不要写“做得好的部分”“主要不足与风险”“工具使用评审”“最终判定/最终判断”等额外章节。",
     }
     reference = judge_input.get("reference_answer") if isinstance(judge_input.get("reference_answer"), dict) else None
     reference_instructions = ""
@@ -772,7 +857,7 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         "只能根据给定 trace/transcript/tool_result 判断，不要假设外部事实，不要要求重新提供数据。"
         "如果证据不足，应说明风险和需要复核的点，但仍给出明确结论。\n\n"
         "评分口径：单个工具失败被恢复时不要上升为整体失败；只有影响用户最终验收时才判 unresolved/wrong。"
-        "评审内容对齐主流 agent eval 维度：任务完成、工具使用、推理路径、指令遵循、忠实度、效率、可靠性。"
+        "评审内容对齐主流 agent eval 维度：任务完成、工具使用、推理路径、指令遵循、流程遵循、忠实度、效率、可靠性。"
         "不要输出启发式复盘口吻，不要写泛化的优点/缺点列表；每个维度必须是一段可读的自然语言判断，且不得超过160字。"
         "review_markdown 不要追加“最终判定/最终判断”章节。\n"
         "【证据先行硬约束】每个维度都必须给出 evidence 数组，且 evidence 必须来自 transcript / tool_result / trace / otel 的具体引用，"
@@ -785,15 +870,17 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         "过程颠簸且最终阻断交付 → reliability 独占 blocking_failure。\n"
         "工具选错或参数错 → tool_use 独占 wrong，与失败次数无关。\n"
         "【每维度证据数量】每个维度的 evidence 数组必须包含**至少 2 条**引用（找不到 2 条时至少 1 条），最多 4 条。\n"
-        "【三步语义抽取——先做这个，再举证】task_completion / instruction_following / faithfulness 长期被误当成同一件事，本次强制先做抽取动作再找证据：\n"
-        "  ① 从 user_query 抽出【主诉求】：用户到底要什么。示例：主诉求=生成新版 exe。**只有 task_completion 引用主诉求**。\n"
-        "  ② 从 user_query 抽出【约束/边界/禁止项清单】：主诉求之外用户附带的规则，覆盖两类，缺一不可：\n"
+        "【四步语义抽取——先做这个，再举证】task_completion / instruction_following / workflow_adherence / faithfulness 长期被误当成同一件事，本次强制先做抽取动作再找证据：\n"
+        "  ① 从 user_query 抽出【主诉求】：用户到底要什么。task_completion 判断最终是否交付；instruction_following 也必须判断 agent 的工作路径是否一直围绕该主需求推进，不能只看附加约束。\n"
+        "  ② 从 user_query 和已采集的 instruction_obligations/harness_constraints/skill_constraints 抽出【约束/边界/禁止项清单】：主诉求之外用户或 harness 附带的规则，覆盖三类：\n"
         "     (a) 边界/禁止类：例如“不要破坏现有结构”“按 dist 现有格式”“只改 X 不动 Y”“中英文一致”“禁止硬编码”。\n"
         "     (b) 手段/工具/harness 指定类：用户明确点名了“要用什么方式/工具/MCP/skill 去做”，哪怕没有指名具体是哪一个（例如“你用 MCP 看一下”“调用某个 skill 处理”“用工具去查”“借助 XX 能力完成”）。"
+        "     (c) 已采集 harness/skill 流程类：trace 中已经出现的 system/developer/rules/AGENTS.md/SKILL.md 流程或边界。没有采集到这类 harness 时不要写“缺证据”，直接按用户需求和可见约束评审。"
         "只要用户点名了实现手段本身，这就是独立于主诉求的一条约束——即使目标和手段写在同一句话里也必须拆开：目标进主诉求，手段进约束清单，**不允许把“用 MCP 看一下项目进度”整体揉进主诉求就当没有约束**。\n"
-        "**只有 instruction_following 引用这个清单**，逐条对照 agent 是否遵守：对手段类约束，要看 trace 里是否真的调用了对应类型的工具/MCP/skill（例如是否有 tool_call 命中 MCP 工具），而不是绕开约束直接凭自身知识/其他方式达成目标。"
-        "若用户原话里除主诉求外**确实没有任何附加约束**（包括没有指定任何手段/工具/MCP/skill），instruction_following 才可以给 verdict=yes 并写 quote=\"用户未提附加约束\"；**只要用户指定了任何手段，哪怕很笼统，都不允许再套用这句话**，必须逐条核实该手段是否被真正使用。**禁止把主诉求当作约束再讲一遍**。\n"
-        "  ③ 从 final_response 抽出【agent 具体声称清单】：faithfulness 回答的是“agent 说过的话是否属实”，不是“东西有没有交付”——判断对象是**话**，不是**物**。合格声称必须是可独立核验的过程性/数量性/状态性陈述，例如“265 项测试全部通过”“doctor 通过”“已升 v6→v7”“已修改 X 处”“共调用了 N 次工具”。"
+        "**只有 instruction_following 引用这个清单**，逐条对照 agent 是否遵守：用户主需求看行动方向和最终响应是否偏离；手段类约束看 trace 里是否真的调用了对应类型的工具/MCP/skill（例如是否有 tool_call 命中 MCP 工具），而不是绕开约束直接凭自身知识/其他方式达成目标。"
+        "若用户原话里除主诉求外**确实没有任何附加约束**（包括没有指定任何手段/工具/MCP/skill），且未采集到 harness/skill 约束，instruction_following 可以基于主需求覆盖给 verdict=yes；**只要用户或已采集 harness 指定了任何边界/手段，哪怕很笼统，都不允许再套用“无附加约束”**，必须逐条核实。**不要把未采集到 harness 当作缺证据扣分**。\n"
+        "  ③ 从 metrics.workflow_constraints / workflow_trace_events 抽出【流程步骤清单】。**只有 workflow_adherence 引用这个清单**，判断明确规定的步骤是否覆盖、是否顺序正确、是否跳过关键校验；SKILL.md 中的“工作流”和“约束”要拆开，工作流进 workflow_adherence，禁止项/边界进 instruction_following。没有采集到 workflow_constraints 时给 not_applicable，不要写缺证据或扣分。\n"
+        "  ④ 从 final_response 抽出【agent 具体声称清单】：faithfulness 回答的是“agent 说过的话是否属实”，不是“东西有没有交付”——判断对象是**话**，不是**物**。合格声称必须是可独立核验的过程性/数量性/状态性陈述，例如“265 项测试全部通过”“doctor 通过”“已升 v6→v7”“已修改 X 处”“共调用了 N 次工具”。"
         "**反例（不算声称，禁止当作 faithfulness 证据）**：单纯陈述“生成/交付/完成了 XX 文件或结果”本身——这只是复述交付物，属于 task_completion 的判断对象，即便它出现在 final_response 里也不能被 faithfulness 拿来当 claim。自检方法：把这句话从 final_response 里去掉后，task_completion 的证据是否也随之消失——如果是，说明它就是交付物本身，两个维度不能共用。"
         "**若逐句检查后除交付物陈述外确实没有其他可验证声称**，faithfulness 必须写 claim=\"agent 未在回复中提出独立于交付物的可验证声称\"，evidence 用 final_response:无独立声称，verdict 给 grounded（没有可证伪的声称就谈不上失实），**不允许为了凑证据数量硬把交付物包装成一个 claim**。"
         "**只有 faithfulness 引用这些声称**，逐条用 tool_result / metrics 反查是否属实（例如是否有 pytest 调用、是否有对应文件写入等）。**禁止把交付物本身当作声称**——交付物是 task_completion 的事，不是 faithfulness 的事。\n"
@@ -801,7 +888,8 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         "  - task_completion → 允许前缀：final_response、assertion:xxx、file:path、artifact:xxx。quote 描述【主诉求】达成情况：用户要 X，交付了 X 或未交付 X。**严禁 tool_call#N**（那是过程证据不是交付证据）。\n"
         "  - tool_use → 允许前缀：tool_choice:tool_name、metrics:tool_kind_count、metrics:tool_count。quote 写选型判断，例如 quote=\"多次使用 Read 循环读文件，用 Grep 一次搜索更合适\"。**严禁 metrics:tool_error_count**。\n"
         "  - reasoning → 允许前缀：step:strategy_shift、step:plan_update、step:thinking、metrics:strategy_shifts_count。quote 写路径特征（绕路/直达/重复），不放 transcript 原文。\n"
-        "  - instruction_following → 允许前缀：user_query:约束点。quote 必须逐条写【约束/边界/禁止项】的具体名字，边界类和手段/工具/MCP/skill 指定类都算，例如 quote=\"约束『不要破坏现有结构』：agent 未破坏\" 或 quote=\"约束『需用 MCP』：agent 是否调用了 MCP 工具\"。**严禁把主诉求（生成 exe）当约束再讲一遍**。只有用户确实没指定任何边界或手段时才明写 quote=\"用户未提附加约束\"，evidence 用 user_query:无附加约束。\n"
+        "  - instruction_following → 允许前缀：user_query:primary_request、user_query:约束点、user_query:harness_N、final_response:instruction_outcome、assertion:instruction-obligations-followed、metrics:tool_count、step:N、tool_call:N。quote 必须覆盖主需求是否被持续遵循，并逐条写【约束/边界/禁止项/harness/skill】的具体名字；user_query ref 只用于列出要求清单，不能单独当作“已遵守”的证明，必须至少配一条 final_response / assertion / step / tool_call / metrics 行为证据。例如 quote=\"主需求『生成新版 exe』：final_response 交代了 exe 交付结果\"、quote=\"约束『需用 MCP』：tool_call 显示是否调用 MCP 工具\"。只有用户确实没指定任何边界或手段且未采集到 harness/skill 时才明写 quote=\"用户未提附加约束\"。\n"
+        "  - workflow_adherence → 允许前缀：workflow:step_N、workflow:source、workflow:order、skill:workflow、harness:workflow、user_query:workflow、step:N、tool_call:N、metrics:workflow_constraint_count。quote 必须写清流程项名称和实际执行证据，例如“SKILL 工作流第 2 步要求先查直接引用者，trace 中 tool_call 显示先执行引用查询再截图”。没有 workflow_constraints 时 verdict=not_applicable，evidence 可用 metrics:workflow_constraint_count 写“未采集到明确流程步骤”。\n"
         "  - faithfulness → 允许前缀 **必须成对**：claim:XX + tool_call#N。claim 必须是从 final_response 抽出的**具体可验证声称**（数字/状态词/操作声称，例如“265 项测试通过”“doctor 通过”“v6→v7”），而不是“生成了 exe”这种交付物本身。**严禁只用 final_response 或只用一般 tool_call**。**例外**：若 final_response 除交付物陈述外确实没有其他可验证声称，允许写 claim:agent未提出独立声称 + final_response:无独立声称 这一对，quote=\"agent 未在回复中提出独立于交付物的可验证声称\"。\n"
         "  - efficiency → 允许前缀：metrics:total_tokens、metrics:input_tokens、metrics:output_tokens、metrics:duration_ms、metrics:tool_count、metrics:step_count、metrics:tool_kind_count、metrics:thinking_steps、metrics:repeated_tool_calls。**必须同时包含 ref=metrics:duration_ms、ref=metrics:total_tokens、ref=metrics:tool_count 这三条**（分别对应耗时/token消耗/工具调用次数，三者都要以证据条目的形式列出，不能只在 review 自然语言里提一句；duration_ms 的分钟数值必须直接取自 runtime_metrics.elapsed_minutes 字段，不要自己换算），可以再加其他前缀补充。**严禁 metrics:tool_error_count**。\n"
         "  - reliability → 允许前缀：step:error_recovery、metrics:tool_error_count、metrics:unrecovered_failures、assertion:safety_xxx、event:crash、event:timeout、**reliability:failure_recovery、reliability:edge_case_handling、reliability:state_consistency**。**必须同时包含这三条固定 ref**：reliability:failure_recovery（quote 体现“是否恢复/是否影响交付”，例如“N 次失败全部恢复，未影响交付”）、reliability:edge_case_handling（quote 说明是否处理了边界/异常输入，没处理就明说“未观察到边界情况处理”）、reliability:state_consistency（quote 说明多次操作间状态是否一致，没有可判断的证据就明说“未观察到状态不一致的证据”）。**只报失败次数不说恢复情况/边界处理/状态一致性，视为证据不合格**。**严禁 tool_call#N**（那是原始工具事件不是恢复观察点）。\n"

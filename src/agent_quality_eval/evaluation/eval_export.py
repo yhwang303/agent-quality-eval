@@ -28,6 +28,7 @@ LLM_DIMENSION_LABELS = {
     "tool_use": "工具使用",
     "reasoning": "推理路径",
     "instruction_following": "指令遵循",
+    "workflow_adherence": "流程遵循",
     "faithfulness": "忠实度",
     "efficiency": "效率",
     "reliability": "可靠性",
