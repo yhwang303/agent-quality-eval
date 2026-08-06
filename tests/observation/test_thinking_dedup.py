@@ -162,3 +162,96 @@ def test_trailing_punctuation_difference_still_counts_as_duplicate():
         _Step(2, "thinking_explicit", _LONG_A, t_ms=1000, gid="uuid-1"),
     ])
     assert _dedupe_redundant_thinking_inter([turn]) == 1
+
+
+# ── 乱码兜底：ASCII 骨架判重 + 干净文本升级 ────────────────────
+#
+# 背景（会话 6b0c4dd8 实测）：hook 落盘 events.jsonl 发生编码事故时，
+# explicit 正文里的 CJK 被烤成乱码（"选择器"→"鈥?"，含 U+FFFD），norm /
+# 前缀规则全部失效，同一条思考的 inter 与 explicit 双双存活。
+
+_GARBLED_A = (
+    "I need to examine how the frontend renders the 鈥?timeline鈥? "
+    "visualization. 瀹屾垚鍚庡啀鐪嬪悗鍙? Next check the export pipeline."
+)
+_CLEAN_A = (
+    "I need to examine how the frontend renders the “timeline” "
+    "visualization. 完成后再看后端。 Next check the export pipeline."
+)
+_GARBLED_B = (
+    "Now I will check the 鈥?backend鈥? export API 鉁? before touching "
+    "the exporter implementation details."
+)
+
+
+def test_garbled_explicit_pair_deduped_by_ascii_skeleton():
+    """乱码 explicit 与干净 inter 的 ASCII 骨架一致 → inter 删除，explicit 留下。"""
+    turn = _Turn([
+        _Step(1, "thinking_inter", _CLEAN_A),
+        _Step(2, "thinking_explicit", _GARBLED_A, t_ms=1000, gid="uuid-1"),
+    ])
+    removed = _dedupe_redundant_thinking_inter([turn])
+    assert removed == 1
+    kinds = [s.step_type for s in turn.steps]
+    assert kinds == ["thinking_explicit"]
+
+
+def test_garbled_explicit_content_upgraded_from_clean_inter():
+    """explicit 乱码、inter 干净时，explicit 正文换成干净副本，metadata 不动。"""
+    explicit = _Step(2, "thinking_explicit", _GARBLED_A, t_ms=1000, gid="uuid-1")
+    turn = _Turn([
+        _Step(1, "thinking_inter", _CLEAN_A),
+        explicit,
+    ])
+    removed = _dedupe_redundant_thinking_inter([turn])
+    assert removed == 1
+    assert explicit.content == _CLEAN_A
+    # hook 元数据留在 explicit 上
+    assert explicit.metadata["observed_at_ms"] == 1000
+    assert explicit.metadata["generation_id"] == "uuid-1"
+
+
+def test_clean_explicit_is_not_overwritten_by_inter():
+    """explicit 本身干净时不做正文替换，只删 inter 副本。"""
+    turn = _Turn([
+        _Step(1, "thinking_inter", _CLEAN_A),
+        _Step(2, "thinking_explicit", _CLEAN_A, t_ms=1000, gid="uuid-1"),
+    ])
+    removed = _dedupe_redundant_thinking_inter([turn])
+    assert removed == 1
+    assert turn.steps[0].content == _CLEAN_A
+
+
+def test_garbled_explicit_without_inter_counterpart_is_kept():
+    """乱码 explicit 找不到骨架一致的 inter 时原样保留——宁漏勿删。"""
+    turn = _Turn([
+        _Step(1, "thinking_explicit", _GARBLED_A, t_ms=1000, gid="uuid-1"),
+        _Step(2, "thinking_inter", _LONG_B),
+    ])
+    removed = _dedupe_redundant_thinking_inter([turn])
+    assert removed == 0
+    assert len(turn.steps) == 2
+    assert turn.steps[0].content == _GARBLED_A
+
+
+def test_skeleton_shorter_than_floor_never_merges():
+    """正文不足 24 字符时不具备区分度，即使完全相同也不判重——宁可保留。"""
+    turn = _Turn([
+        _Step(1, "thinking_inter", "用 rg 搜索 error 相关代码路径"),
+        _Step(2, "thinking_explicit", "用 rg 搜索 error 相关代码路径",
+              t_ms=1000, gid="uuid-1"),
+    ])
+    assert _dedupe_redundant_thinking_inter([turn]) == 0
+    assert len(turn.steps) == 2
+
+
+def test_substring_skeleton_matches_asymmetric_garble():
+    """CJK 前导语乱码不对称时，严格相等的骨架会漏——子串规则兜底。"""
+    inter_text = "先总结已完成的部分。 " + _LONG_A
+    turn = _Turn([
+        _Step(1, "thinking_inter", inter_text),
+        _Step(2, "thinking_explicit", _LONG_A, t_ms=1000, gid="uuid-1"),
+    ])
+    removed = _dedupe_redundant_thinking_inter([turn])
+    assert removed == 1
+    assert [s.step_type for s in turn.steps] == ["thinking_explicit"]

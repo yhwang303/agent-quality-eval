@@ -136,8 +136,12 @@ def main() -> None:
     )
 
     manifest = load_json(DATASET / "manifest.json")
+    # eval-pipeline-regression 类用例（如 case-07）没有 canonical_gold /
+    # negative_control——它们守的是提取器+评估管线回归，不参与本套件。
+    runnable = [item for item in manifest["cases"] if item.get("canonical_gold")]
+    skipped_cases = len(manifest["cases"]) - len(runnable)
     results = []
-    for item in manifest["cases"]:
+    for item in runnable:
         canonical_path = DATASET / item["canonical_gold"]
         canonical = load_json(canonical_path)
         summary = upload_reference_dataset(
@@ -204,6 +208,7 @@ def main() -> None:
         "execution": {
             "mode": "isolated reference eval",
             "case_count": len(results),
+            "skipped_non_gold_cases": skipped_cases,
             "negative_controls_are_synthetic": True,
             "production_data_modified": False,
             "local_judge_settings_reused": judge_settings_reused,

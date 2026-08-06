@@ -673,7 +673,7 @@ def test_turn_eval_cache_is_keyed_by_trace_and_gold(tmp_path, monkeypatch):
         build_calls.append(kwargs)
         report = _report("cache-session", passed=True, score=1.0)
         report["eval_version"] = "v3"
-        report["assertion_set"] = {"version": "turn-v3.7"}
+        report["assertion_set"] = {"version": "turn-v3.9"}
         return report
 
     monkeypatch.setattr(eval_api, "build_turn_eval_report", fake_build)

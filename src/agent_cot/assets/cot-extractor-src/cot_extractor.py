@@ -2812,6 +2812,106 @@ def _summarize_event_counts(events: List[Dict]) -> Dict[str, int]:
     return out
 
 
+# ─── v0.19.6: 用户消息 <timestamp> 作为 turn 全覆盖时间窗 ───
+#
+# 背景：Cursor 压缩（compaction）会重写 transcript，晚近 turn 的 tool_use
+# 块被剥掉后，这些 turn 一个带 observed_at_ms 的锚点 step 都不剩。事件
+# 路由（_inject_agent_thoughts 的窗口兜底 + _attach_cursor_events 的
+# _pick_turn_for）依赖锚点推断 turn 窗口——无锚 turn 对路由完全不可见，
+# 后续所有事件塌陷进最后一个有锚的 turn（实测会话 83811387：今天 373
+# 条事件全部倒进 turn 1，turn 4/5 只剩 user_input + final_response）。
+# 用户消息正文里的 <timestamp>（IDE 注入）是压缩也拿不走的真实 turn
+# 边界，用它构建 [start_i, start_{i+1}) 全覆盖窗口，优先于锚点窗口。
+
+_USER_TS_RE = re.compile(
+    r"<timestamp>\s*(?:[A-Za-z]+,\s*)?"
+    r"([A-Za-z]{3})\w*\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([AP]M)"
+    r"\s*\(\s*UTC\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?\s*\)"
+)
+
+_TS_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _parse_user_ts_ms(content: Optional[str]) -> Optional[int]:
+    """解析 user_input 正文里的 <timestamp> 标签 → epoch ms（失败 None）。
+
+    月份按静态表映射，不走 strptime %b——后者依赖系统 locale，中文
+    Windows 上匹配不了英文月份缩写。
+    """
+    if not content:
+        return None
+    m = _USER_TS_RE.search(str(content))
+    if not m:
+        return None
+    month = _TS_MONTHS.get(m.group(1).lower())
+    if month is None:
+        return None
+    try:
+        from datetime import datetime, timedelta, timezone
+        hour = int(m.group(4)) % 12
+        if m.group(6).upper() == "PM":
+            hour += 12
+        sign = 1 if m.group(7) == "+" else -1
+        off_min = sign * (int(m.group(8)) * 60
+                          + (int(m.group(9)) if m.group(9) else 0))
+        dt = datetime(int(m.group(3)), month, int(m.group(2)),
+                      hour, int(m.group(5)),
+                      tzinfo=timezone(timedelta(minutes=off_min)))
+        return int(dt.timestamp() * 1000)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _turn_user_start_ms(turn: "TurnCoT") -> Optional[int]:
+    for s in turn.steps:
+        if s.step_type == StepType.USER_INPUT:
+            return _parse_user_ts_ms(s.content)
+    return None
+
+
+def _user_ts_turn_windows(
+    turns_cot: List["TurnCoT"],
+) -> Optional[List[Tuple[Optional[int], Optional[int], "TurnCoT"]]]:
+    """[(lo_ms, hi_ms|None, turn)]：hi=None 表示 +∞。全无时间戳返回 None。
+
+    窗口半开 [lo, hi)，相邻 turn 无缝衔接，任何事件都有唯一归属；无
+    时间戳的 turn 窗口记 (None, None)，交回调用方的旧逻辑兜底。
+    """
+    starts = [_turn_user_start_ms(t) for t in turns_cot]
+    if not any(v is not None for v in starts):
+        return None
+    windows: List[Tuple[Optional[int], Optional[int], "TurnCoT"]] = []
+    n = len(turns_cot)
+    for i, turn in enumerate(turns_cot):
+        lo = starts[i]
+        if lo is None:
+            windows.append((None, None, turn))
+            continue
+        hi = None
+        for j in range(i + 1, n):
+            if starts[j] is not None:
+                hi = starts[j]
+                break
+        windows.append((lo, hi, turn))
+    return windows
+
+
+def _match_user_ts_window(
+    windows: Optional[List[Tuple[Optional[int], Optional[int], "TurnCoT"]]],
+    t_ms: float,
+) -> Optional["TurnCoT"]:
+    """在全覆盖窗口里找 t_ms 的归属 turn；找不到返回 None。"""
+    if not windows:
+        return None
+    for lo, hi, turn in windows:
+        if lo is not None and lo <= t_ms and (hi is None or t_ms < hi):
+            return turn
+    return None
+
+
 def _attach_cursor_events(
     turns_cot: List["TurnCoT"],
     events: List[Dict],
@@ -3139,6 +3239,27 @@ def _attach_cursor_events(
                 content = (payload.get("content") or brief_in.get("content")
                            or "")
                 content = str(content)
+                # 乱码兜底：hook 落盘(events.jsonl)发生编码事故时 content 里
+                # 的 CJK 已被烤坏；beforeReadFile 事件恰好带着磁盘路径，直接
+                # 从磁盘复读原文换回干净内容。重读失败/仍然乱码则保留原文。
+                rescued = False
+                if _looks_garbled(content):
+                    roots_raw = (payload.get("workspace_roots")
+                                 or payload.get("workspaceRoots")
+                                 or e.get("workspace_roots")
+                                 or e.get("workspaceRoots") or [])
+                    roots = roots_raw if isinstance(roots_raw, list) else []
+                    clean = _reread_file_utf8(
+                        str(brief_in.get("path") or payload.get("path") or ""),
+                        max(len(content), 1),
+                        roots,
+                    )
+                    if clean is not None and not _looks_garbled(clean):
+                        content = clean
+                        rescued = True
+                        stats["read_content_rescued"] = (
+                            stats.get("read_content_rescued", 0) + 1
+                        )
                 # 大文件 content 会很长；预览取前 64 KB，全文还在 events.jsonl
                 preview = content[:64 * 1024]
                 md = dict(s.metadata) if isinstance(s.metadata, dict) else {}
@@ -3150,6 +3271,8 @@ def _attach_cursor_events(
                 }
                 md["observed_at_ms"] = e.get("t")
                 md["observed_source"] = "cursor_events_read"
+                if rescued:
+                    md["read_content_rescued"] = True
                 if md.get("synthetic"):
                     md["synthetic"] = False
                     md["synthetic_upgraded"] = True
@@ -3212,7 +3335,13 @@ def _attach_cursor_events(
                 md["observed_input"] = (e.get("brief_input")
                                         or {"tool": tool_name})
                 md["observed_output"] = brief_out
-                md["observed_at_ms"] = e.get("t")
+                # agentToolResult 的 ``t`` 是**重放时刻**（提取器/backfill
+                # re-run Glob/Grep 的 wall-clock），不是工具真实执行时刻。
+                # 写进 observed_at_ms 会污染 _inject_agent_thoughts 的时间
+                # 锚——全部 thinking 被判成"早于第一个锚点"，扎堆排到 turn
+                # 开头（实测 6b0c4dd8 turn1 的 17 条 thinking 全部前置）。
+                # 只记 reproduced_at_ms 留档，不参与时间锚。
+                md["reproduced_at_ms"] = e.get("t")
                 md["observed_source"] = "reproduced"
                 md["reproduction_elapsed_ms"] = brief_out.get("elapsed_ms")
                 if md.get("synthetic"):
@@ -3270,6 +3399,10 @@ def _attach_cursor_events(
         orphan_events.append(e)
 
     if orphan_events and turns_cot:
+        # v0.19.6：优先用用户消息 <timestamp> 的全覆盖窗口——压缩后晚近
+        # turn 没有锚点 step，锚点窗口对它们完全失明；用户消息时间戳是
+        # 压缩也拿不走的真实边界。命中直接返回，未命中再走锚点推断。
+        user_ts_windows = _user_ts_turn_windows(turns_cot)
         # 用每个 turn 已有 step 的 observed_at_ms 推断 turn 的 wall-clock 窗口；
         # 用于把 orphan event 分配到正确的 turn（thinking 已经被 _inject_agent_thoughts
         # 注入过 observed_at_ms，所以多 turn 场景下窗口足够区分）。
@@ -3287,6 +3420,10 @@ def _attach_cursor_events(
                 turn_windows.append((None, None, turn))
 
         def _pick_turn_for(t_ms: Optional[int]) -> "TurnCoT":
+            if t_ms is not None:
+                hit = _match_user_ts_window(user_ts_windows, t_ms)
+                if hit is not None:
+                    return hit
             if t_ms is None or not turn_windows:
                 return turns_cot[-1]
             # 1) 落在某个 turn 的精确窗口里
@@ -3414,22 +3551,50 @@ def _attach_cursor_events(
             stats["synthesised_from_events"] = stats.get("synthesised_from_events", 0) + 1
 
         # 按 observed_at_ms 重排每个 turn 的 steps，让 thinking 与合成的 tool
-        # 按真实 wall-clock 时间交错。没有 observed_at_ms 的 step（user_input /
-        # final_response）保持在 step_index 自然位置（用大常量推到末尾）。
-        def _sort_key(step: "ThoughtStep") -> Tuple[int, int]:
-            if isinstance(step.metadata, dict):
-                t_s = step.metadata.get("observed_at_ms")
-                if isinstance(t_s, (int, float)):
-                    return (int(t_s), step.step_index)
-            # user_input 推到最前；final_response 推到最后；其余按 step_index
-            if step.step_type == StepType.USER_INPUT:
-                return (-(10 ** 18), step.step_index)
-            if step.step_type == StepType.FINAL_RESPONSE:
-                return (10 ** 18, step.step_index)
-            return (0, step.step_index)
+        # 按真实 wall-clock 时间交错。无时间戳的 step 继承最近锚点的时间
+        # （前向填充，队首向后取），保持 tool_decision→tool_result 这类相邻
+        # 对不被拆散——直接给 0 会把它们全部沉到带锚步骤之前，打乱真实执行
+        # 顺序。排序全程稳定，相等键保持原相对顺序。
+        def _resort_turn_steps(turn: "TurnCoT") -> None:
+            steps = turn.steps
+            n = len(steps)
+            if n <= 1:
+                return
+            raw: List[Optional[int]] = []
+            for s in steps:
+                md = s.metadata if isinstance(s.metadata, dict) else {}
+                t_s = md.get("observed_at_ms")
+                raw.append(int(t_s) if isinstance(t_s, (int, float)) else None)
+            # 前向填充：无锚 step 继承前一个锚点时间（贴住上文语境）
+            eff: List[Optional[int]] = list(raw)
+            last: Optional[int] = None
+            for i in range(n):
+                if eff[i] is not None:
+                    last = eff[i]
+                else:
+                    eff[i] = last
+            # 队首无锚段：继承后一个锚点时间
+            nxt: Optional[int] = None
+            for i in range(n - 1, -1, -1):
+                if raw[i] is not None:
+                    nxt = raw[i]
+                elif eff[i] is None:
+                    eff[i] = nxt
+
+            big = 10 ** 18
+
+            def _key(item: Tuple[int, "ThoughtStep"]) -> Tuple[int, int]:
+                i, s = item
+                if s.step_type == StepType.USER_INPUT:
+                    return (-big, i)  # 永远最前
+                if s.step_type == StepType.FINAL_RESPONSE:
+                    return (big, i)  # 永远最后
+                return (eff[i] if eff[i] is not None else 0, i)
+
+            turn.steps = [s for _, s in sorted(enumerate(steps), key=_key)]
 
         for turn in turns_cot:
-            turn.steps.sort(key=_sort_key)
+            _resort_turn_steps(turn)
 
     return stats
 
@@ -3587,12 +3752,21 @@ def _inject_agent_thoughts(
 
     # ── Step B: 把每条 thought 落到 turn ──
     thoughts_by_turn: Dict[int, List[Dict]] = {}
+    # v0.19.6：用户消息 <timestamp> 全覆盖窗口——压缩后无锚 turn 的
+    # thinking 全靠它归位（否则 thought_orphan 直接丢弃）。
+    user_ts_windows = _user_ts_turn_windows(turns_cot)
     # 时间窗会扩 60s 以容忍 thinking 在第一次 tool 之前 / 最后一次之后的情况
     # （turn 第一句往往是纯思考、最后一句也常常是 wrap-up 思考）
     SLACK_S = 60.0
     for th in thoughts:
         gid = (th.get("payload") or {}).get("generation_id")
         ti = gid_to_turn.get(gid) if gid else None
+        if ti is None and user_ts_windows:
+            t = th.get("t")
+            if isinstance(t, (int, float)):
+                hit = _match_user_ts_window(user_ts_windows, float(t))
+                if hit is not None:
+                    ti = hit.turn_index
         if ti is None:
             t = th.get("t")
             if isinstance(t, (int, float)):
@@ -3645,6 +3819,13 @@ def _inject_agent_thoughts(
         th_iter = iter(ths)
         next_th: Optional[Dict] = next(th_iter, None)
         for i in range(n_orig):
+            # user_input 永远是 turn 的第一个元素：thinking 注入绝不能排到
+            # 用户提问之前。无锚点场景下（effective time 全部 None）while
+            # 会把所有 thought 倒到 step 0 前面，形成"用户还没问就先想了
+            # 一屏"的时序错乱。
+            if original[i].step_type == StepType.USER_INPUT:
+                merged.append(original[i])
+                continue
             et = eff_t[i]
             # 把所有 t 早于本步骤 effective time 的 thought 插到本步骤前
             while next_th is not None and (et is None
@@ -3703,6 +3884,61 @@ def _norm_thought_text(s: Optional[str]) -> str:
     if not s:
         return ""
     return " ".join(str(s).split()).strip()
+
+
+_GARBLE_CJK_Q_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]\?")
+
+
+def _ascii_skeleton(text: str) -> str:
+    """把正文压成 ASCII 骨架，用于跨编码判重。
+
+    Why: hook 落盘（events.jsonl）若发生编码事故（GBK→UTF-8 误读等），
+    thinking 正文里的 CJK 会被烤成乱码，但 ASCII 字母/数字/结构通常原样
+    存活；transcript 侧的 inter 文本始终是干净 UTF-8。剥掉非 ASCII 后
+    两边骨架一致，即可认定同一条思考。
+    """
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def _looks_garbled(text: str) -> bool:
+    """True 当文本疑似编码事故产物。
+
+    信号：U+FFFD replacement char，或「CJK 字符后紧跟 ASCII ?」出现 ≥3 次
+    （"—"→"鈥?"、"✅"→"鉁?" 这类 GBK 误读的典型残留；正常中文标点用的是
+    全角 ？，不会触发）。宁严勿宽——只在疑似时触发兜底，避免误伤正常文本。
+    """
+    if not text:
+        return False
+    if "\ufffd" in text:
+        return True
+    return len(_GARBLE_CJK_Q_RE.findall(text)) >= 3
+
+
+def _reread_file_utf8(path: str, max_chars: int,
+                      roots: Optional[List[str]] = None) -> Optional[str]:
+    """beforeReadFile 乱码兜底：从磁盘以 UTF-8 重读文件，换回干净内容。
+
+    hook 落盘若发生编码事故，event content 里的 CJK 已被烤坏；但事件同时
+    携带文件路径，磁盘原件仍是干净的。重读失败（文件不存在/已变更/读取出
+    错）返回 None，调用方保留原文。截断上限与 hook 原文对齐，避免把整份
+    文件灌进 trace。
+    """
+    if not path:
+        return None
+    p = Path(path)
+    candidates = [p]
+    if not p.is_absolute():
+        for root in roots or []:
+            candidates.append(Path(str(root)) / path)
+    for cand in candidates:
+        try:
+            if not cand.is_file():
+                continue
+            with open(cand, "r", encoding="utf-8", errors="replace") as fh:
+                return fh.read(max_chars + 1)[:max_chars]
+        except Exception:
+            continue
+    return None
 
 
 # ─── v0.17.x: cursor afterAgentResponse → turn.usage 回填 ───
@@ -3967,21 +4203,33 @@ def _dedupe_redundant_thinking_inter(turns_cot: List["TurnCoT"]) -> int:
     决定，实测同一条思考的 inter 与 explicit 常常相隔几十甚至两百多个
     step（一条 cursor 会话里 782 组重复因此全部漏掉）。既然判定依据是
     「正文几乎相同」而不是「挨得近」，窗口就没有存在意义。
+
+    乱码兜底（ASCII 骨架判重）：hook 落盘若发生编码事故，explicit 正文
+    里的 CJK 被烤成乱码，norm/前缀规则全部失效。此时改用 ASCII 骨架
+    （剥掉非 ASCII 后的字母数字串，≥24 字符才参与）判同一条思考；命中
+    且 explicit 疑似乱码、inter 干净时，用 inter 文本升级 explicit 正文
+    ——metadata（generation_id / observed_at_ms / model）留在 explicit
+    上不动，只是正文换成干净副本。
     """
     removed = 0
+    upgraded = 0
     for turn in turns_cot:
         steps = turn.steps
         if not steps:
             continue
-        exp_norms = [
-            n for n in (
-                _norm_thought_text(s.content) for s in steps
-                if s.step_type == StepType.THINKING_EXPLICIT
-            ) if n and _is_dedupe_safe_thought(n)
-        ]
-        if not exp_norms:
+        # (归一化正文, ascii 骨架, 原 step)；乱码 explicit 的 norm 与干净
+        # inter 对不上，但 ASCII 骨架通常对得上。
+        exp_entries: List[Tuple[str, str, "ThoughtStep"]] = []
+        for s in steps:
+            if s.step_type != StepType.THINKING_EXPLICIT:
+                continue
+            n = _norm_thought_text(s.content)
+            if n and _is_dedupe_safe_thought(n):
+                exp_entries.append((n, _ascii_skeleton(n), s))
+        if not exp_entries:
             continue
-        exp_exact = set(exp_norms)
+        exp_exact = {n for n, _, _ in exp_entries}
+        exp_skeletons = {sk for _, sk, _ in exp_entries if len(sk) >= 24}
         keep: List[ThoughtStep] = []
         for s in steps:
             if s.step_type != StepType.THINKING_INTER:
@@ -3996,7 +4244,7 @@ def _dedupe_redundant_thinking_inter(turns_cot: List["TurnCoT"]) -> int:
                 continue
             # 容忍尾部省略号 / 标点差异：长度差 ≤10 且前缀对得上
             matched = False
-            for exp_norm in exp_norms:
+            for exp_norm, _, _ in exp_entries:
                 if abs(len(exp_norm) - len(inter_norm)) > 10:
                     continue
                 short, long = sorted([exp_norm, inter_norm], key=len)
@@ -4004,6 +4252,35 @@ def _dedupe_redundant_thinking_inter(turns_cot: List["TurnCoT"]) -> int:
                 if head_len > 0 and long.startswith(short[:head_len]):
                     matched = True
                     break
+            if not matched:
+                # 乱码兜底：hook 侧正文被编码事故烤坏时 norm/前缀规则全部
+                # 失效，改用 ASCII 骨架判同一条思考。先精确命中；否则放宽到
+                # 「一方骨架是另一方的子串」——乱码对 CJK 前导语的破坏不
+                # 对称（一边的 ASCII 幸存片段另一边没有），严格相等会漏。
+                # ≥24 字符地板 + 同 turn 作用域保持保守。命中后若 explicit
+                # 疑似乱码、inter 干净，用 inter 的干净文本升级 explicit
+                # 正文——metadata（generation_id / observed_at_ms / model）
+                # 留在 explicit 上不动。
+                sk = _ascii_skeleton(inter_norm)
+                matched_sk: Optional[str] = None
+                if len(sk) >= 24:
+                    if sk in exp_skeletons:
+                        matched_sk = sk
+                    else:
+                        for _, exp_sk, _ in exp_entries:
+                            if (len(exp_sk) >= 24
+                                    and (sk in exp_sk or exp_sk in sk)):
+                                matched_sk = exp_sk
+                                break
+                if matched_sk is not None:
+                    matched = True
+                    for _, exp_sk, exp_step in exp_entries:
+                        if exp_sk == matched_sk:
+                            if (_looks_garbled(exp_step.content)
+                                    and not _looks_garbled(s.content)):
+                                exp_step.content = s.content
+                                upgraded += 1
+                            break
             if matched:
                 removed += 1
                 continue

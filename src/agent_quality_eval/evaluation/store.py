@@ -11,7 +11,7 @@ from typing import Any
 from .models import ExperimentResult, ScoreResult, TestCase, TrialResult, utc_now
 
 CURRENT_TURN_EVAL_VERSION = "v3"
-CURRENT_TURN_EVAL_ASSERTION_SET_VERSION = "turn-v3.7"
+CURRENT_TURN_EVAL_ASSERTION_SET_VERSION = "turn-v3.9"
 
 
 def default_home() -> Path:

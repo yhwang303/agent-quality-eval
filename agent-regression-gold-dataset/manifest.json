@@ -1,7 +1,7 @@
 {
   "schema_version": "aqe-regression-gold-suite-v1",
   "name": "AQE real-trace Gold normalization and regression suite",
-  "case_count": 6,
+  "case_count": 7,
   "source_policy": "Minimized copies of local observed traces; raw Gold files simulate incomplete novice uploads.",
   "cases": [
     {
@@ -93,6 +93,20 @@
       "normalization_report": "case-06-product-brainstorm/normalization-report.json",
       "negative_control": "case-06-product-brainstorm/negative-control/trace.json",
       "canonical_hash": "7835bb6bddddbe07"
+    },
+    {
+      "case_id": "case-07-complex-harness-dryrun",
+      "kind": "eval-pipeline-regression",
+      "agent_type": "cursor",
+      "complexity": "complex",
+      "source_session_id": "6b0c4dd8-95a1-458c-afe9-ad328ec67f5c",
+      "source_turn_index": 1,
+      "testcase": "case-07-complex-harness-dryrun/testcase.md",
+      "trace": "case-07-complex-harness-dryrun/trace.json",
+      "trace_jsonl": "case-07-complex-harness-dryrun/trace.jsonl",
+      "eval_as_executed": "case-07-complex-harness-dryrun/eval.json",
+      "eval_expected": "case-07-complex-harness-dryrun/eval-expected.json",
+      "notes": "eval-pipeline regression anchor; no canonical_gold/negative_control — gold suite runner skips it. eval-expected.json regenerated with v1.0.20 / turn-v3.9 (error_count = real tool failures only, hardened validation/safety assertions)."
     }
   ]
 }

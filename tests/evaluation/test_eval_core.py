@@ -164,7 +164,7 @@ def test_turn_eval_reports_tokens_tps_and_persists(tmp_path, monkeypatch):
     assert report["eval_panel"]["diagnostics"]["efficiency"]["tokens"] == 150
     assert report["eval_panel"]["safety_gate"]["status"] in {"pass", "fail"}
     assert report["task_profile"]["primary"] in report["task_profile"]["labels"]
-    assert report["assertion_set"]["version"] == "turn-v3.7"
+    assert report["assertion_set"]["version"] == "turn-v3.9"
     assert report["assertion_results"]
     categories = {item["category"] for item in report["assertion_results"]}
     assert categories >= {"task_outcome", "execution_integrity", "code_delivery", "tool_use"}

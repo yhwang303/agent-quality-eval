@@ -471,6 +471,21 @@ def _normalize_reliability_evidence(dim: dict[str, Any], metrics: dict[str, Any]
     return dim
 
 
+_CONSTRAINT_CATEGORY_PRIORITY = {
+    "prohibition": 0,
+    "requirement": 1,
+    "format": 2,
+    "scope": 3,
+    "primary_request": 4,
+    "sequence": 5,
+    "tool_or_method": 6,
+}
+
+
+def _constraint_sort_key(entry: tuple[str, str]) -> int:
+    return _CONSTRAINT_CATEGORY_PRIORITY.get(entry[1], 5)
+
+
 def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(dim, dict):
         return dim
@@ -480,9 +495,60 @@ def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]
     violations = metrics.get("instruction_obligation_violations") if isinstance(metrics.get("instruction_obligation_violations"), list) else []
     if not violations:
         violations = metrics.get("boundary_constraint_violations") if isinstance(metrics.get("boundary_constraint_violations"), list) else []
-    evidence = [item for item in (dim.get("evidence") or []) if isinstance(item, dict)]
-    existing_refs = {str(item.get("ref") or "") for item in evidence}
+
+    raw_evidence = [item for item in (dim.get("evidence") or []) if isinstance(item, dict)]
+    # Requirement citations are not proof of behavior. user_query:* refs the
+    # judge emitted as "evidence" are relocated into constraints_cited; the
+    # evidence array keeps only agent-behavior refs (what the agent *did*).
+    evidence: list[dict[str, Any]] = []
+    constraints_cited: list[dict[str, Any]] = [
+        item for item in (dim.get("constraints_cited") or []) if isinstance(item, dict)
+    ]
+    cited_texts: list[str] = [
+        str(item.get("quote") or "")[:40]
+        for item in constraints_cited
+        if str(item.get("quote") or "").strip()
+    ]
+    # (text, category) pairs for building a readable constraint listing in the
+    # review; hard categories (禁止/必须/范围/格式) are preferred over
+    # narrative-heavy sequence/tool mentions.
+    cited_entries: list[tuple[str, str]] = []
+    for item in raw_evidence:
+        ref = str(item.get("ref") or "")
+        if ref == "user_query" or ref.startswith("user_query:"):
+            constraints_cited.append(item)
+        else:
+            evidence.append(item)
+
+    def _cite(ref: str, text: str, source: str, category: str = "") -> None:
+        text = text.strip()
+        if not text:
+            return
+        key = text[:40]
+        if key in cited_texts:
+            return
+        cited_texts.append(key)
+        cited_entries.append((text, category))
+        constraints_cited.append({"ref": ref, "quote": text[:160], "source": source})
+
+    primary = next((item for item in obligations if isinstance(item, dict) and item.get("category") == "primary_request"), None)
+    if primary:
+        _cite("user_query:primary_request", f"主需求：{str(primary.get('text') or '')[:140]}", "user_query", "primary_request")
+    for idx, item in enumerate(constraints[:6], start=1):
+        _cite(f"user_query:constraint_{idx}", str(item.get("text") or ""), "user_query", str(item.get("category") or ""))
+    harness_items = [
+        item for item in obligations
+        if isinstance(item, dict) and item.get("source") not in {"", None, "user_query"} and item.get("category") != "primary_request"
+    ]
+    for idx, item in enumerate(harness_items[:4], start=1):
+        _cite(
+            f"user_query:harness_{idx}",
+            str(item.get("text") or ""),
+            str(item.get("source") or "harness"),
+        )
+
     behavior_evidence: list[dict[str, Any]] = []
+    existing_refs = {str(item.get("ref") or "") for item in evidence}
     final_response = str(metrics.get("final_response") or metrics.get("assistant_response") or "").strip()
     if final_response and "final_response:instruction_outcome" not in existing_refs:
         behavior_evidence.append(
@@ -510,47 +576,6 @@ def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]
                 "source": "metrics",
             }
         )
-    primary = next((item for item in obligations if isinstance(item, dict) and item.get("category") == "primary_request"), None)
-    if primary and "user_query:primary_request" not in existing_refs:
-        evidence.append(
-            {
-                "ref": "user_query:primary_request",
-                "quote": f"主需求清单『{str(primary.get('text') or '')[:140]}』；是否遵守需结合 final_response/trace 行为证据判断，用户原文本身不算证明。",
-                "source": "user_query",
-            }
-        )
-    for idx, item in enumerate(constraints[:6], start=1):
-        ref = f"user_query:constraint_{idx}"
-        if ref in existing_refs:
-            continue
-        text = str(item.get("text") or "").strip()
-        if not text:
-            continue
-        evidence.append(
-            {
-                "ref": ref,
-                "quote": f"约束清单『{text[:120]}』；是否遵守需结合 trace 行为、工具调用或断言结果判断，用户原文本身不算证明。",
-                "source": "user_query",
-            }
-        )
-    harness_items = [
-        item for item in obligations
-        if isinstance(item, dict) and item.get("source") not in {"", None, "user_query"} and item.get("category") != "primary_request"
-    ]
-    for idx, item in enumerate(harness_items[:4], start=1):
-        ref = f"user_query:harness_{idx}"
-        if ref in existing_refs:
-            continue
-        text = str(item.get("text") or "").strip()
-        if not text:
-            continue
-        evidence.append(
-            {
-                "ref": ref,
-                "quote": f"已采集 {item.get('source') or 'harness'} 约束清单『{text[:120]}』；仅按已采集内容核对，未采集到的 harness 不臆测。",
-                "source": str(item.get("source") or "harness"),
-            }
-        )
     for idx, item in enumerate(violations[:4], start=1):
         evidence.append(
             {
@@ -566,7 +591,13 @@ def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]
             if str(dim.get("verdict") or "") == "yes":
                 dim["verdict"] = "partial"
         elif constraints and len(review) < 80:
-            names = "、".join(str(item.get("text") or "").strip()[:24] for item in constraints[:3] if isinstance(item, dict) and str(item.get("text") or "").strip())
+            hard = [c for c in constraints if str(c.get("category") or "") in {"prohibition", "requirement", "scope", "format"}]
+            pool = hard or constraints
+            pool = sorted(
+                (c for c in pool if isinstance(c, dict)),
+                key=lambda c: _CONSTRAINT_CATEGORY_PRIORITY.get(str(c.get("category") or ""), 5),
+            )
+            names = "；".join(f"『{str(item.get('text') or '').strip()[:36]}』" for item in pool[:3] if str(item.get("text") or "").strip())
             dim["review"] = (
                 f"本轮除主需求外还识别到 {len(constraints)} 条显式约束"
                 f"{'：' + names if names else ''}。当前未发现确定性违背，但结论必须结合最终回应、工具调用和断言结果核对，不能只把用户 prompt 当作遵守证据。"
@@ -577,6 +608,17 @@ def _normalize_instruction_evidence(dim: dict[str, Any], metrics: dict[str, Any]
             f"{violations[0].get('reason') if isinstance(violations[0], dict) else '需复核约束执行情况'}"
         )
         dim["verdict"] = "no" if any(str(v.get("severity") or "") == "high" for v in violations if isinstance(v, dict)) else "partial"
+    # The review must *name* the constraints, not just claim they were
+    # followed. If fewer than two cited constraint texts show up in the
+    # review, prepend a deterministic listing so the verdict stays auditable.
+    review = str(dim.get("review") or "")
+    named = sum(1 for text in cited_texts if text[:10] and text[:10] in review)
+    if cited_texts and named < 2:
+        hard = [entry for entry in cited_entries if entry[1] in {"prohibition", "requirement", "scope", "format"}]
+        pool = sorted(hard or cited_entries, key=_constraint_sort_key)
+        listing = "；".join(f"『{text[:48]}』" for text, _category in pool[:4])
+        dim["review"] = f"约束清单：{listing}。{review}"
+    dim["constraints_cited"] = constraints_cited[:10]
     dim["evidence"] = (behavior_evidence + evidence)[:10]
     return dim
 
@@ -801,10 +843,29 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
             "on_track | drift | redundant | lost",
             "80-160字完整自然语言段落。评估推理路径是否围绕目标推进、是否有偏航、重复检索、过早下结论或缺少验证。",
         ),
-        "instruction_following": dimension_schema_with_evidence(
-            "yes | partial | no",
-            "80-160字完整自然语言段落。先评估用户主需求是否被行动路径持续遵循，再评估显式边界、禁止项、用户指定手段/工具/MCP/skill，以及已采集到的 rules/AGENTS/system/developer/skill harness 是否被遵循。未采集到 harness 时不要臆测或扣分。",
-        ),
+        "instruction_following": {
+            "verdict": "yes | partial | no",
+            "review": (
+                "80-200字完整自然语言段落。**必须先把约束内容显式写出来再判定**：开头用『约束清单：①…②…③…』形式逐条写出识别到的约束具体内容"
+                "（每条≤30字，覆盖用户边界/禁止项、指定手段/工具/MCP/skill、已采集 harness/skill 约束，至少列出 2-3 条具体例子；"
+                "确实没有附加约束时明写『用户未提附加约束』），然后再写主需求是否被行动路径持续遵循及逐条遵守判定。"
+                "禁止只写『约束均被遵循』这类不点名的空泛结论。未采集到 harness 时不要臆测或扣分。"
+            ),
+            "constraints_cited": [
+                {
+                    "ref": "user_query:约束点 | user_query:primary_request | user_query:harness_N",
+                    "quote": "约束的具体内容原文或概括，≤120字。",
+                    "source": "user_query | harness | skill | rules | system",
+                }
+            ],
+            "evidence": [
+                {
+                    "ref": "final_response:instruction_outcome | assertion:instruction-obligations-followed | step:N | tool_call:N | metrics:tool_count",
+                    "quote": "证明 agent **实际行为**遵守或违背了哪条约束的原文片段，最多 240 字。",
+                    "source": "transcript | tool_result | trace | assertion | metrics",
+                }
+            ],
+        },
         "workflow_adherence": dimension_schema_with_evidence(
             "strict | partial | violated | not_applicable",
             "80-160字完整自然语言段落。只评估已采集到的明确流程/步骤顺序要求是否按顺序执行，来源包括用户 prompt、SKILL.md 工作流、AGENTS.md/rules、system/developer 指令、工具/MCP 文档或 gold process。没有采集到流程要求时给 not_applicable，不写缺证据也不扣分。",
@@ -869,6 +930,14 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         "过程颠簸但最终恢复 → tool_use 与 reliability 应给中性，efficiency 判 excessive。\n"
         "过程颠簸且最终阻断交付 → reliability 独占 blocking_failure。\n"
         "工具选错或参数错 → tool_use 独占 wrong，与失败次数无关。\n"
+        "【工具选型评价范围】judge_input.available_tools.observed_tools 列出了本轮实际观察到的工具及调用/失败次数；评价“是否选对工具”以此清单为准。"
+        "认为存在更优但未出现在清单中的工具时，只能在 review 中作为推测注明（例如“若 harness 提供了 X 工具则更合适”），不得当作确定事实作为扣分依据。\n"
+        "【确定性指标交叉验证——引用失败数前必做】metrics:tool_error_count、metrics:unrecovered_failures 与 error 类确定性断言来自关键词启发式统计，"
+        "可能把“文本提到 error/失败”（用户 prompt 原文、思维复述约束、文件内容本身含 error 字样）误判成真实工具失败。"
+        "在任何维度引用失败次数或复述断言里的失败结论之前，必须先在 trace 中核对工具结果步骤的真实状态（is_error / exit_code / success / 结果内容）："
+        "若没有任何工具结果显示显式失败，必须把失败数按 0 处理，不得在任何维度复述幽灵失败数，也不得据此下调 verdict。"
+        "同理，runtime_metrics.error_mention_diagnostics 与任何 *_error_terms 计数均为**文本提及统计**（用户原文/思维/工具结果文本里出现 error 字样），"
+        "不是失败；唯一可引用的失败数是 runtime_metrics.tool_calls_failed 与 unrecovered_failures。\n"
         "【每维度证据数量】每个维度的 evidence 数组必须包含**至少 2 条**引用（找不到 2 条时至少 1 条），最多 4 条。\n"
         "【四步语义抽取——先做这个，再举证】task_completion / instruction_following / workflow_adherence / faithfulness 长期被误当成同一件事，本次强制先做抽取动作再找证据：\n"
         "  ① 从 user_query 抽出【主诉求】：用户到底要什么。task_completion 判断最终是否交付；instruction_following 也必须判断 agent 的工作路径是否一直围绕该主需求推进，不能只看附加约束。\n"
@@ -888,7 +957,7 @@ def _build_prompt(judge_input: dict[str, Any]) -> str:
         "  - task_completion → 允许前缀：final_response、assertion:xxx、file:path、artifact:xxx。quote 描述【主诉求】达成情况：用户要 X，交付了 X 或未交付 X。**严禁 tool_call#N**（那是过程证据不是交付证据）。\n"
         "  - tool_use → 允许前缀：tool_choice:tool_name、metrics:tool_kind_count、metrics:tool_count。quote 写选型判断，例如 quote=\"多次使用 Read 循环读文件，用 Grep 一次搜索更合适\"。**严禁 metrics:tool_error_count**。\n"
         "  - reasoning → 允许前缀：step:strategy_shift、step:plan_update、step:thinking、metrics:strategy_shifts_count。quote 写路径特征（绕路/直达/重复），不放 transcript 原文。\n"
-        "  - instruction_following → 允许前缀：user_query:primary_request、user_query:约束点、user_query:harness_N、final_response:instruction_outcome、assertion:instruction-obligations-followed、metrics:tool_count、step:N、tool_call:N。quote 必须覆盖主需求是否被持续遵循，并逐条写【约束/边界/禁止项/harness/skill】的具体名字；user_query ref 只用于列出要求清单，不能单独当作“已遵守”的证明，必须至少配一条 final_response / assertion / step / tool_call / metrics 行为证据。例如 quote=\"主需求『生成新版 exe』：final_response 交代了 exe 交付结果\"、quote=\"约束『需用 MCP』：tool_call 显示是否调用 MCP 工具\"。只有用户确实没指定任何边界或手段且未采集到 harness/skill 时才明写 quote=\"用户未提附加约束\"。\n"
+        "  - instruction_following → **约束原文引用不再放 evidence**：user_query:primary_request、user_query:约束点、user_query:harness_N 一律放入 constraints_cited 数组（逐条写出约束具体内容）。evidence 数组**只放 agent 行为证据**，允许前缀：final_response:instruction_outcome、assertion:instruction-obligations-followed、metrics:tool_count、step:N、tool_call:N。每条 evidence 的 quote 必须能证明 agent 的某个实际行为遵守/违背了哪条已列出的约束，格式如 quote=\"约束『需用 MCP』：tool_call 显示调用了 MCP 工具\"。只有用户确实没指定任何边界或手段且未采集到 harness/skill 时，constraints_cited 可为空并明写 quote=\"用户未提附加约束\"。\n"
         "  - workflow_adherence → 允许前缀：workflow:step_N、workflow:source、workflow:order、skill:workflow、harness:workflow、user_query:workflow、step:N、tool_call:N、metrics:workflow_constraint_count。quote 必须写清流程项名称和实际执行证据，例如“SKILL 工作流第 2 步要求先查直接引用者，trace 中 tool_call 显示先执行引用查询再截图”。没有 workflow_constraints 时 verdict=not_applicable，evidence 可用 metrics:workflow_constraint_count 写“未采集到明确流程步骤”。\n"
         "  - faithfulness → 允许前缀 **必须成对**：claim:XX + tool_call#N。claim 必须是从 final_response 抽出的**具体可验证声称**（数字/状态词/操作声称，例如“265 项测试通过”“doctor 通过”“v6→v7”），而不是“生成了 exe”这种交付物本身。**严禁只用 final_response 或只用一般 tool_call**。**例外**：若 final_response 除交付物陈述外确实没有其他可验证声称，允许写 claim:agent未提出独立声称 + final_response:无独立声称 这一对，quote=\"agent 未在回复中提出独立于交付物的可验证声称\"。\n"
         "  - efficiency → 允许前缀：metrics:total_tokens、metrics:input_tokens、metrics:output_tokens、metrics:duration_ms、metrics:tool_count、metrics:step_count、metrics:tool_kind_count、metrics:thinking_steps、metrics:repeated_tool_calls。**必须同时包含 ref=metrics:duration_ms、ref=metrics:total_tokens、ref=metrics:tool_count 这三条**（分别对应耗时/token消耗/工具调用次数，三者都要以证据条目的形式列出，不能只在 review 自然语言里提一句；duration_ms 的分钟数值必须直接取自 runtime_metrics.elapsed_minutes 字段，不要自己换算），可以再加其他前缀补充。**严禁 metrics:tool_error_count**。\n"
